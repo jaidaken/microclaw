@@ -2014,9 +2014,71 @@ async fn send_matrix_streaming_response(
                 }
             }
             AgentEvent::ToolStart { name, .. } => {
-                // Add tool usage indicator
-                let _ = name; let tool_indicator = String::new();
-                accumulated_text.push_str(&tool_indicator);
+                let _ = name;
+                // Ensure a visible message bubble exists so the user sees activity
+                // even on tool-only turns (no TextDelta yet).
+                if streaming_state.is_none() {
+                    let initial_event_id = if prefer_sdk_send {
+                        if let Some(sdk_client) = runtime.sdk_client.as_ref() {
+                            let slot = sdk_client.read().await;
+                            if let Some(client) = slot.as_ref() {
+                                if let Ok(room_id_parsed) = room_id.parse::<OwnedRoomId>() {
+                                    if let Some(room) = client.get_room(&room_id_parsed) {
+                                        let content =
+                                            RoomMessageEventContent::text_plain("Working...");
+                                        match room.send(content).await {
+                                            Ok(response) => response.event_id.to_string(),
+                                            Err(_) => {
+                                                let payload = matrix_message_payload_for_text(
+                                                    "Working...",
+                                                );
+                                                send_matrix_message_payload(
+                                                    &http_client,
+                                                    &runtime.homeserver_url,
+                                                    &runtime.access_token,
+                                                    room_id,
+                                                    &payload,
+                                                )
+                                                .await
+                                                .unwrap_or_default()
+                                            }
+                                        }
+                                    } else { String::new() }
+                                } else { String::new() }
+                            } else { String::new() }
+                        } else {
+                            let payload = matrix_message_payload_for_text("Working...");
+                            send_matrix_message_payload(
+                                &http_client,
+                                &runtime.homeserver_url,
+                                &runtime.access_token,
+                                room_id,
+                                &payload,
+                            )
+                            .await
+                            .unwrap_or_default()
+                        }
+                    } else {
+                        let payload = matrix_message_payload_for_text("Working...");
+                        send_matrix_message_payload(
+                            &http_client,
+                            &runtime.homeserver_url,
+                            &runtime.access_token,
+                            room_id,
+                            &payload,
+                        )
+                        .await
+                        .unwrap_or_default()
+                    };
+                    if !initial_event_id.is_empty() {
+                        streaming_state = Some(MatrixStreamingState {
+                            room_id: room_id.to_string(),
+                            initial_event_id,
+                            current_content: String::new(),
+                            reasoning_content: None,
+                        });
+                    }
+                }
 
                 // Trigger immediate edit update if streaming
                 if let Some(ref mut state) = streaming_state {
