@@ -2104,6 +2104,55 @@ async fn send_matrix_streaming_response(
                     }
                 }
             }
+            AgentEvent::ToolResult { name, is_error, preview, duration_ms, status_code, error_type, .. } => {
+                if is_error {
+                    let preview_trimmed = preview.trim();
+                    let preview_short: String = if preview_trimmed.is_empty() {
+                        "(no output)".to_string()
+                    } else if preview_trimmed.len() > 500 {
+                        let mut t = preview_trimmed[..500].to_string();
+                        t.push_str("\n... (truncated)");
+                        t
+                    } else {
+                        preview_trimmed.to_string()
+                    };
+                    let kind = error_type.clone().unwrap_or_else(|| "error".to_string());
+                    let status_part = match status_code {
+                        Some(c) => format!(" (exit {})", c),
+                        None => String::new(),
+                    };
+                    let block = format!(
+                        "\n\n> Tool error: {} ({}{}, {}ms)\n> ```\n> {}\n> ```",
+                        name,
+                        kind,
+                        status_part,
+                        duration_ms,
+                        preview_short.replace('\n', "\n> "),
+                    );
+                    accumulated_text.push_str(&block);
+                    if let Some(ref mut state) = streaming_state {
+                        if edit_count < max_edits {
+                            let (main_content, _) = if streaming_config.reasoning_display
+                                == MatrixReasoningDisplayMode::Hidden
+                            {
+                                parse_matrix_reasoning_blocks(&accumulated_text)
+                            } else {
+                                (accumulated_text.clone(), None)
+                            };
+                            let _ = edit_matrix_message(
+                                &http_client,
+                                &runtime.homeserver_url,
+                                &runtime.access_token,
+                                &state.room_id,
+                                &state.initial_event_id,
+                                &main_content,
+                            )
+                            .await;
+                            edit_count += 1;
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
