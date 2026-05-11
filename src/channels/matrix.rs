@@ -1251,6 +1251,37 @@ fn matrix_message_payload_for_text(chunk: &str) -> Value {
     }
 }
 
+
+async fn send_matrix_typing(
+    client: &reqwest::Client,
+    homeserver_url: &str,
+    access_token: &str,
+    room_id: &str,
+    bot_user_id: &str,
+    typing: bool,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/_matrix/client/v3/rooms/{}/typing/{}",
+        homeserver_url.trim_end_matches('/'),
+        urlencoding::encode(room_id),
+        urlencoding::encode(bot_user_id),
+    );
+    let body = if typing {
+        serde_json::json!({ "typing": true, "timeout": 30000 })
+    } else {
+        serde_json::json!({ "typing": false })
+    };
+    client
+        .put(&url)
+        .bearer_auth(access_token.trim())
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("typing PUT failed: {e}"))?;
+    Ok(())
+}
+
 async fn send_matrix_message_payload(
     client: &reqwest::Client,
     homeserver_url: &str,
@@ -2343,6 +2374,36 @@ async fn handle_matrix_message(
     let crate::channels::event_tap::EventTap { replay_rx: tap_replay_rx, join: tap_join } =
         crate::channels::event_tap::EventTap::spawn(event_rx, injection_ack);
 
+    // Spawn typing-indicator task: shows "claw is typing..." in Cinny etc.
+    // Refreshes every 25s (Matrix typing default timeout is 30s).
+    // Cancelled when agent completes (typing_cancel dropped).
+    let (typing_cancel_tx, mut typing_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    let typing_handle = {
+        let homeserver = runtime.homeserver_url.clone();
+        let access_token = runtime.access_token.clone();
+        let room_id_clone = msg.room_id.clone();
+        let bot_user_id = runtime.bot_user_id.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let _ = send_matrix_typing(
+                &client, &homeserver, &access_token, &room_id_clone, &bot_user_id, true,
+            ).await;
+            loop {
+                tokio::select! {
+                    _ = &mut typing_cancel_rx => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(25)) => {
+                        let _ = send_matrix_typing(
+                            &client, &homeserver, &access_token, &room_id_clone, &bot_user_id, true,
+                        ).await;
+                    }
+                }
+            }
+            let _ = send_matrix_typing(
+                &client, &homeserver, &access_token, &room_id_clone, &bot_user_id, false,
+            ).await;
+        })
+    };
+
     // Live streaming: spawn the matrix-edit consumer BEFORE the agent
     // loop so it drains events in real time, growing the message bubble
     // as the agent emits TextDelta / ToolStart / ToolResult events.
@@ -2389,6 +2450,8 @@ async fn handle_matrix_message(
     {
         Ok(response) => {
             drop(event_tx);
+            let _ = typing_cancel_tx.send(());
+            let _ = typing_handle.await;
 
             if let Some(handle) = streaming_handle {
                 match handle.await {
@@ -2509,6 +2572,8 @@ async fn handle_matrix_message(
             }
         }
         Err(e) => {
+            let _ = typing_cancel_tx.send(());
+            let _ = typing_handle.await;
             error!("Error processing Matrix message: {e}");
             if !should_suppress_user_error(&e) {
                 let _ = send_matrix_text_runtime(
