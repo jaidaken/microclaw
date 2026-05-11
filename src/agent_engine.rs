@@ -2061,15 +2061,13 @@ pub(crate) fn build_system_prompt(
     project_context: Option<&str>,
     user_model: Option<&str>,
 ) -> String {
-    let now_utc = chrono::Utc::now();
+    // Wall-clock time intentionally omitted: it would change every request
+    // and invalidate the system-prompt cache key. The agent uses
+    // `get_current_time` for time-aware behavior instead.
     let tz_label = configured_timezone
         .parse::<chrono_tz::Tz>()
         .map(|tz| tz.to_string())
         .unwrap_or_else(|_| "UTC".to_string());
-    let now_local = configured_timezone
-        .parse::<chrono_tz::Tz>()
-        .map(|tz| now_utc.with_timezone(&tz).to_rfc3339())
-        .unwrap_or_else(|_| now_utc.to_rfc3339());
 
     // If a SOUL.md is provided, use it as the identity preamble instead of the default
     let identity = if let Some(soul) = soul_content {
@@ -2129,10 +2127,7 @@ Example of what TO do:
 
 The current chat_id is {chat_id}. Use this when calling send_message, schedule, export_chat, memory(chat scope), or todo tools.
 Permission model: you may only operate on the current chat unless this chat is configured as a control chat. If you try cross-chat operations without permission, tools will return a permission error.
-Current runtime time context:
-- configured_timezone: {tz_label}
-- current_local_time: {now_local}
-- current_utc_time: {now_utc}
+The configured timezone for this deployment is {tz_label}. For wall-clock time, call the `get_current_time` tool; do not assume a value from this prompt.
 
 For complex, multi-step tasks: use todo_write to create a plan first, then execute each step and update the todo list as you go. This helps you stay organized and lets the user see progress.
 

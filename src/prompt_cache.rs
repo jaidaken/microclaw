@@ -30,6 +30,19 @@ pub fn apply_anthropic_prompt_cache(body: &mut Value, ttl: &str) {
     let mut budget = MAX_BREAKPOINTS;
 
     if let Some(obj) = body.as_object_mut() {
+        // Cache the tools array first: it is the largest stable prefix in
+        // microclaw's requests and rarely changes between calls.
+        if let Some(tools) = obj.get_mut("tools").and_then(|v| v.as_array_mut()) {
+            if let Some(last) = tools.last_mut() {
+                attach_marker_to_block(last, &marker);
+                budget -= 1;
+            }
+        }
+
+        if budget == 0 {
+            return;
+        }
+
         if let Some(system) = obj.get_mut("system") {
             if mark_system(system, &marker) {
                 budget -= 1;
@@ -41,7 +54,7 @@ pub fn apply_anthropic_prompt_cache(body: &mut Value, ttl: &str) {
         }
 
         if let Some(messages) = obj.get_mut("messages").and_then(|v| v.as_array_mut()) {
-            // last `budget` non-system messages — in microclaw the messages
+            // last `budget` non-system messages, in microclaw the messages
             // array never contains a "system" role (system is a top-level
             // field), but we filter defensively for parity with hermes.
             let mut targets: Vec<usize> = messages
