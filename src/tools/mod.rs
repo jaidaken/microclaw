@@ -154,7 +154,8 @@ impl ToolRegistry {
                 )
                 .with_default_timeout_secs(config.tool_timeout_secs("bash", 120))
                 .with_sandbox_router(sandbox_router.clone())
-                .with_dangerous_patterns(&config.bash_dangerous_patterns),
+                .with_dangerous_patterns(&config.bash_dangerous_patterns)
+                .with_hard_deny_patterns(&config.bash_hard_deny_patterns),
             ),
             Box::new(
                 browser::BrowserTool::new(&config.data_dir)
@@ -382,7 +383,8 @@ impl ToolRegistry {
                 )
                 .with_default_timeout_secs(config.tool_timeout_secs("bash", 120))
                 .with_sandbox_router(sandbox_router.clone())
-                .with_dangerous_patterns(&config.bash_dangerous_patterns),
+                .with_dangerous_patterns(&config.bash_dangerous_patterns)
+                .with_hard_deny_patterns(&config.bash_hard_deny_patterns),
             ),
             Box::new(
                 browser::BrowserTool::new(&config.data_dir)

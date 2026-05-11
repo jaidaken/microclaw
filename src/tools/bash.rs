@@ -19,6 +19,8 @@ pub struct BashTool {
     /// Compiled command-content patterns that always force operator approval,
     /// independent of `tool_risk` chat-level gating. Empty = no inspection.
     dangerous_patterns: Vec<(String, regex::Regex)>,
+    // Hard-deny shapes: rejected outright, no approval path, no auto-retry.
+    hard_deny_patterns: Vec<(String, regex::Regex)>,
 }
 
 impl BashTool {
@@ -36,6 +38,7 @@ impl BashTool {
             default_timeout_secs: 120,
             sandbox_router: None,
             dangerous_patterns: Vec::new(),
+            hard_deny_patterns: Vec::new(),
         }
     }
 
@@ -50,7 +53,7 @@ impl BashTool {
     }
 
     /// Compile and store dangerous-command patterns. Invalid regexes are
-    /// logged and skipped — operator typos must not break the bash tool.
+    /// logged and skipped, operator typos must not break the bash tool.
     pub fn with_dangerous_patterns(mut self, patterns: &[String]) -> Self {
         for raw in patterns {
             let with_flag = if raw.starts_with("(?i)") {
@@ -62,6 +65,23 @@ impl BashTool {
                 Ok(re) => self.dangerous_patterns.push((raw.clone(), re)),
                 Err(e) => tracing::warn!(
                     "ignoring invalid bash_dangerous_patterns entry {raw:?}: {e}"
+                ),
+            }
+        }
+        self
+    }
+
+    pub fn with_hard_deny_patterns(mut self, patterns: &[String]) -> Self {
+        for raw in patterns {
+            let with_flag = if raw.starts_with("(?i)") {
+                raw.clone()
+            } else {
+                format!("(?i){raw}")
+            };
+            match regex::Regex::new(&with_flag) {
+                Ok(re) => self.hard_deny_patterns.push((raw.clone(), re)),
+                Err(e) => tracing::warn!(
+                    "ignoring invalid bash_hard_deny_patterns entry {raw:?}: {e}"
                 ),
             }
         }
@@ -207,11 +227,17 @@ impl Tool for BashTool {
             None => return ToolResult::error("Missing 'command' parameter".into()),
         };
 
-        // Command-content gate: certain shell snippets are dangerous regardless
-        // of which chat invoked the tool. Force operator approval before
-        // proceeding. The auto-retry path in tool_executor sees the
-        // `approval_required` error type and either retries with the marker
-        // (after explicit user approval) or pauses the agent.
+        // Hard-deny runs ahead of approval. The approval marker cannot
+        // bypass this gate, the auto-retry path skips error_type=policy_denied.
+        for (raw, re) in &self.hard_deny_patterns {
+            if re.is_match(command) {
+                return ToolResult::error(format!(
+                    "Refused: command matches policy_denied pattern `{raw}`. This shape is never permitted."
+                ))
+                .with_error_type("policy_denied");
+            }
+        }
+
         let already_approved = input
             .get(BASH_HIGH_RISK_APPROVED_KEY)
             .and_then(|v| v.as_bool())
@@ -421,6 +447,30 @@ mod tests {
         assert!(result.is_error, "expected approval gate, got success");
         assert_eq!(result.error_type.as_deref(), Some("approval_required"));
         assert!(result.content.contains("dangerous pattern"));
+    }
+
+    #[tokio::test]
+    async fn test_hard_deny_returns_policy_denied_not_approval() {
+        let deny = vec![r"\brm\s+-rf\s+/\s*$".to_string()];
+        let tool = BashTool::new(".").with_hard_deny_patterns(&deny);
+        let result = tool.execute(json!({"command": "rm -rf /"})).await;
+        assert!(result.is_error);
+        assert_eq!(result.error_type.as_deref(), Some("policy_denied"));
+        assert!(result.content.contains("policy_denied"));
+    }
+
+    #[tokio::test]
+    async fn test_hard_deny_bypassed_by_approval_marker_does_not_apply() {
+        let deny = vec![r"\brm\s+-rf\s+/\s*$".to_string()];
+        let tool = BashTool::new(".").with_hard_deny_patterns(&deny);
+        let result = tool
+            .execute(json!({
+                "command": "rm -rf /",
+                "__microclaw_high_risk_approved": true,
+            }))
+            .await;
+        assert!(result.is_error);
+        assert_eq!(result.error_type.as_deref(), Some("policy_denied"));
     }
 
     #[tokio::test]

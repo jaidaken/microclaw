@@ -88,14 +88,13 @@ fn mark_system(system: &mut Value, marker: &Value) -> bool {
             }]);
             true
         }
-        Value::Array(blocks) => {
-            if let Some(last) = blocks.last_mut() {
-                attach_marker_to_block(last, marker);
+        Value::Array(blocks) => match last_cacheable_block_idx(blocks) {
+            Some(idx) => {
+                attach_marker_to_block(&mut blocks[idx], marker);
                 true
-            } else {
-                false
             }
-        }
+            None => false,
+        },
         _ => false,
     }
 }
@@ -117,12 +116,12 @@ fn mark_message(msg: &mut Value, marker: &Value) {
             }]);
         }
         Value::Array(blocks) => {
-            if let Some(last) = blocks.last_mut() {
-                attach_marker_to_block(last, marker);
+            if let Some(idx) = last_cacheable_block_idx(blocks) {
+                attach_marker_to_block(&mut blocks[idx], marker);
             }
         }
         _ => {
-            // Null / number / bool — unusual, skip.
+            // Null / number / bool, unusual, skip.
         }
     }
 }
@@ -131,6 +130,19 @@ fn attach_marker_to_block(block: &mut Value, marker: &Value) {
     if let Some(obj) = block.as_object_mut() {
         obj.insert("cache_control".to_string(), marker.clone());
     }
+}
+
+// Anthropic rejects cache_control on empty text blocks. Walk back to find
+// the last block that is non-text, or text with non-empty body.
+fn last_cacheable_block_idx(blocks: &[Value]) -> Option<usize> {
+    for (i, b) in blocks.iter().enumerate().rev() {
+        let is_empty_text = b.get("type").and_then(|t| t.as_str()) == Some("text")
+            && b.get("text").and_then(|t| t.as_str()).map_or(true, str::is_empty);
+        if !is_empty_text {
+            return Some(i);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -268,5 +280,47 @@ mod tests {
             body["messages"][0]["content"][0]["cache_control"],
             ephemeral()
         );
+    }
+
+    #[test]
+    fn skips_trailing_empty_text_block() {
+        let mut body = json!({
+            "system": "S",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "preface"},
+                        {"type": "tool_use", "id": "t1", "name": "bash", "input": {}},
+                        {"type": "text", "text": ""},
+                    ],
+                },
+            ],
+        });
+        apply_anthropic_prompt_cache(&mut body, "5m");
+        let blocks = &body["messages"][0]["content"];
+        assert!(blocks[0].get("cache_control").is_none());
+        assert_eq!(blocks[1]["cache_control"], ephemeral(), "marker should land on tool_use, skipping the empty trailing text");
+        assert!(blocks[2].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn all_empty_text_blocks_no_marker() {
+        let mut body = json!({
+            "system": "S",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": ""},
+                        {"type": "text", "text": ""},
+                    ],
+                },
+            ],
+        });
+        apply_anthropic_prompt_cache(&mut body, "5m");
+        let blocks = &body["messages"][0]["content"];
+        assert!(blocks[0].get("cache_control").is_none());
+        assert!(blocks[1].get("cache_control").is_none());
     }
 }

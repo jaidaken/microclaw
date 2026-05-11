@@ -186,6 +186,26 @@ fn default_bash_dangerous_patterns() -> Vec<String> {
         r"\bch(mod|own)\s+-R\s+[^/]*\s+/(\s|$)".into(),
     ]
 }
+
+// Never-run shapes. No approval flow; auto-retry skipped.
+fn default_bash_hard_deny_patterns() -> Vec<String> {
+    vec![
+        // rm against the literal root, with no path past it.
+        r"\brm\s+(-[a-zA-Z]*[rfRF][a-zA-Z]*\s+)+/\s*$".into(),
+        // dd writing to a real block device.
+        r"\bdd\s+.*\bof=/dev/(sd[a-z]|nvme|vd[a-z]|mmcblk)".into(),
+        // Forkbomb.
+        r":\(\)\s*\{\s*:\s*\|\s*:&\s*\}\s*;\s*:".into(),
+        // Filesystem format on block device.
+        r"\bmkfs(\.[a-z0-9]+)?\s+/dev/".into(),
+        // Redirect to raw block device.
+        r">\s*/dev/(sd[a-z]|nvme|vd[a-z]|mmcblk)".into(),
+        // Push --force-with-lease/force to main or master.
+        r"\bgit\s+push\s+.*--force\b.*\b(main|master)\b".into(),
+        // System power state changes.
+        r"\b(shutdown|reboot|halt|poweroff)\b\s+(-[a-zA-Z]\s+)?(now|\+|-r|-h)".into(),
+    ]
+}
 fn default_high_risk_tool_user_confirmation_required() -> bool {
     true
 }
@@ -1018,6 +1038,11 @@ pub struct Config {
     /// string. Set to an empty list to disable command-content gating.
     #[serde(default = "default_bash_dangerous_patterns")]
     pub bash_dangerous_patterns: Vec<String>,
+    /// Hard-deny list: matches here are rejected outright, no approval path,
+    /// no auto-retry. For nuclear shapes that should never auto-run regardless
+    /// of operator policy.
+    #[serde(default = "default_bash_hard_deny_patterns")]
+    pub bash_hard_deny_patterns: Vec<String>,
     #[serde(default)]
     pub sandbox: SandboxConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1588,6 +1613,7 @@ impl Config {
             working_dir_isolation: WorkingDirIsolation::Chat,
             high_risk_tool_user_confirmation_required: true,
             bash_dangerous_patterns: default_bash_dangerous_patterns(),
+            bash_hard_deny_patterns: default_bash_hard_deny_patterns(),
             sandbox: SandboxConfig::default(),
             openai_api_key: None,
             override_timezone: None,
