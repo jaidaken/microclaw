@@ -1208,32 +1208,47 @@ fn extract_matrix_user_ids(text: &str) -> Vec<String> {
     out
 }
 
+
+fn markdown_to_matrix_html(md: &str) -> String {
+    use pulldown_cmark::{Parser, Options, html};
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    opts.insert(Options::ENABLE_FOOTNOTES);
+    let parser = Parser::new_ext(md, opts);
+    let mut out = String::with_capacity(md.len() * 2);
+    html::push_html(&mut out, parser);
+    out
+}
+
 fn matrix_message_payload_for_text(chunk: &str) -> Value {
     let user_ids = extract_matrix_user_ids(chunk);
-    if user_ids.is_empty() {
-        return serde_json::json!({
-            "msgtype": "m.text",
-            "body": chunk,
-        });
-    }
-
-    let mut formatted = html_escape(chunk);
+    let mut formatted = markdown_to_matrix_html(chunk);
     for uid in &user_ids {
         let escaped_uid = html_escape(uid);
         let href = format!("https://matrix.to/#/{}", uid);
         let pill = format!("<a href=\"{}\">{}</a>", html_escape(&href), escaped_uid);
         formatted = formatted.replace(&escaped_uid, &pill);
     }
-
-    serde_json::json!({
-        "msgtype": "m.text",
-        "body": chunk,
-        "format": "org.matrix.custom.html",
-        "formatted_body": formatted,
-        "m.mentions": {
-            "user_ids": user_ids,
-        }
-    })
+    if user_ids.is_empty() {
+        serde_json::json!({
+            "msgtype": "m.text",
+            "body": chunk,
+            "format": "org.matrix.custom.html",
+            "formatted_body": formatted,
+        })
+    } else {
+        serde_json::json!({
+            "msgtype": "m.text",
+            "body": chunk,
+            "format": "org.matrix.custom.html",
+            "formatted_body": formatted,
+            "m.mentions": {
+                "user_ids": user_ids,
+            }
+        })
+    }
 }
 
 async fn send_matrix_message_payload(
@@ -1804,12 +1819,17 @@ async fn edit_matrix_message(
     let txn_id = uuid::Uuid::new_v4().to_string();
 
     // Build edit payload with m.replace relation
+    let formatted = markdown_to_matrix_html(new_text);
     let payload = serde_json::json!({
         "msgtype": "m.text",
         "body": format!("* {}", new_text),
+        "format": "org.matrix.custom.html",
+        "formatted_body": format!("* {}", formatted),
         "m.new_content": {
             "msgtype": "m.text",
-            "body": new_text
+            "body": new_text,
+            "format": "org.matrix.custom.html",
+            "formatted_body": formatted
         },
         "m.relates_to": {
             "rel_type": "m.replace",
