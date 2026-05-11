@@ -910,7 +910,20 @@ async fn start_matrix_e2ee_sync(app_state: Arc<AppState>, runtime: MatrixRuntime
             }
         }
 
-        if let Err(e) = client.sync(settings()).await {
+        let cb_client = client.clone();
+        let sync_result = client
+            .sync_with_callback(settings(), move |response| {
+                let cb_client = cb_client.clone();
+                async move {
+                    if !response.rooms.invited.is_empty() {
+                        auto_join_invited_rooms(&cb_client).await;
+                    }
+                    matrix_sdk::LoopCtrl::Continue
+                }
+            })
+            .await;
+
+        if let Err(e) = sync_result {
             warn!("Matrix SDK sync loop ended: {e}");
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
