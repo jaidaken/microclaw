@@ -1896,6 +1896,39 @@ async fn edit_matrix_message(
 }
 
 // Send streaming response for Matrix
+
+fn render_active_tools_footer(active: &std::collections::HashMap<String, Vec<String>>) -> String {
+    if active.is_empty() { return String::new(); }
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("\n\n---\n**Currently running:**".to_string());
+    let mut names: Vec<&String> = active.keys().collect();
+    names.sort();
+    for name in names {
+        let entries = &active[name];
+        for entry in entries {
+            let preview = if entry.len() > 80 {
+                format!("{}...", &entry[..80])
+            } else {
+                entry.clone()
+            };
+            lines.push(format!("- `{}`: {}", name, preview));
+        }
+    }
+    lines.join("\n")
+}
+
+fn shorten_tool_input(name: &str, input: &serde_json::Value) -> String {
+    match name {
+        "bash" => input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "web_fetch" => input.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "web_search" => input.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "read_file" | "write_file" | "edit_file" => input.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "glob" => input.get("pattern").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        "grep" => input.get("pattern").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        _ => input.to_string(),
+    }
+}
+
 async fn send_matrix_streaming_response(
     runtime: &MatrixRuntimeContext,
     room_id: &str,
@@ -1908,6 +1941,9 @@ async fn send_matrix_streaming_response(
     let http_client = reqwest::Client::new();
     let mut accumulated_text = String::new();
     let mut streaming_state: Option<MatrixStreamingState> = None;
+    // Track in-flight tool calls so we can render them as a footer in
+    // the streaming bubble. Map: tool name -> Vec of short input preview.
+    let mut active_tools: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     let mut edit_interval = interval(Duration::from_millis(streaming_config.edit_interval_ms));
     let mut edit_count = 0;
     let max_edits = streaming_config.max_edits_per_message;
@@ -2025,13 +2061,14 @@ async fn send_matrix_streaming_response(
                         main_content.clone()
                     };
 
+                    let display_with_footer = format!("{}{}", display_content, render_active_tools_footer(&active_tools));
                     if let Err(e) = edit_matrix_message(
                         &http_client,
                         &runtime.homeserver_url,
                         &runtime.access_token,
                         &state.room_id,
                         &state.initial_event_id,
-                        &display_content,
+                        &display_with_footer,
                     )
                     .await
                     {
@@ -2044,8 +2081,9 @@ async fn send_matrix_streaming_response(
                     }
                 }
             }
-            AgentEvent::ToolStart { name, .. } => {
-                let _ = name;
+            AgentEvent::ToolStart { name, input } => {
+                let preview = shorten_tool_input(&name, &input);
+                active_tools.entry(name.clone()).or_default().push(preview);
                 // Ensure a visible message bubble exists so the user sees activity
                 // even on tool-only turns (no TextDelta yet).
                 if streaming_state.is_none() {
@@ -2136,6 +2174,36 @@ async fn send_matrix_streaming_response(
                 }
             }
             AgentEvent::ToolResult { name, is_error, preview, duration_ms, status_code, error_type, .. } => {
+                // Drop the most recent in-flight entry for this tool.
+                if let Some(entries) = active_tools.get_mut(&name) {
+                    entries.pop();
+                    if entries.is_empty() { active_tools.remove(&name); }
+                }
+                // Trigger an edit so the footer updates even on success.
+                if !is_error {
+                    if let Some(ref state) = streaming_state {
+                        if edit_count < max_edits {
+                            let (main_content, _) = if streaming_config.reasoning_display
+                                == MatrixReasoningDisplayMode::Hidden
+                            {
+                                parse_matrix_reasoning_blocks(&accumulated_text)
+                            } else {
+                                (accumulated_text.clone(), None)
+                            };
+                            let combined = format!("{}{}", main_content, render_active_tools_footer(&active_tools));
+                            let _ = edit_matrix_message(
+                                &http_client,
+                                &runtime.homeserver_url,
+                                &runtime.access_token,
+                                &state.room_id,
+                                &state.initial_event_id,
+                                &combined,
+                            )
+                            .await;
+                            edit_count += 1;
+                        }
+                    }
+                }
                 if is_error {
                     let preview_trimmed = preview.trim();
                     let preview_short: String = if preview_trimmed.is_empty() {
