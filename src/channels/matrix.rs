@@ -2015,7 +2015,7 @@ async fn send_matrix_streaming_response(
             }
             AgentEvent::ToolStart { name, .. } => {
                 // Add tool usage indicator
-                let tool_indicator = format!("\n\n🛠️ Using tool: {}", name);
+                let _ = name; let tool_indicator = String::new();
                 accumulated_text.push_str(&tool_indicator);
 
                 // Trigger immediate edit update if streaming
