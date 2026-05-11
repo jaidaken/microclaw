@@ -885,7 +885,20 @@ async fn process_with_agent_logic(
         );
     }
 
-    let tool_defs = state.tools.definitions().to_vec();
+    let tool_defs: Vec<_> = {
+        let disabled: std::collections::HashSet<String> = state
+            .config
+            .disabled_tools
+            .iter()
+            .map(|s| s.to_ascii_lowercase())
+            .collect();
+        state
+            .tools
+            .definitions()
+            .into_iter()
+            .filter(|d| !disabled.contains(&d.name.to_ascii_lowercase()))
+            .collect()
+    };
     let mut skill_env_files: Vec<String> = {
         let db = state.db.clone();
         call_blocking(db, move |db| db.load_session_skill_envs(chat_id))

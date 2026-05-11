@@ -1043,6 +1043,11 @@ pub struct Config {
     /// of operator policy.
     #[serde(default = "default_bash_hard_deny_patterns")]
     pub bash_hard_deny_patterns: Vec<String>,
+    /// Tool names to omit from the registry's outbound LLM payload. Case-
+    /// insensitive. Useful for shrinking the per-request token budget on
+    /// rate-limited providers without recompiling.
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
     #[serde(default)]
     pub sandbox: SandboxConfig,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1614,6 +1619,7 @@ impl Config {
             high_risk_tool_user_confirmation_required: true,
             bash_dangerous_patterns: default_bash_dangerous_patterns(),
             bash_hard_deny_patterns: default_bash_hard_deny_patterns(),
+            disabled_tools: Vec::new(),
             sandbox: SandboxConfig::default(),
             openai_api_key: None,
             override_timezone: None,
