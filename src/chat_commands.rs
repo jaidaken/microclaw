@@ -220,7 +220,7 @@ pub async fn handle_chat_command(
         return Some("Context cleared (session + chat history).".to_string());
     }
 
-    if trimmed == "/stop" {
+    if trimmed == "/stop" || trimmed == "/cancel" {
         let stopped = run_control::abort_runs(caller_channel, chat_id).await;
         if stopped > 0 {
             return Some(format!("Stopping current run ({stopped} active)."));

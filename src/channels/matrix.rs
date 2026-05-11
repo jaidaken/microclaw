@@ -224,6 +224,10 @@ pub struct MatrixRuntimeContext {
     pub backup_key: String,
     pub sdk_client: Option<Arc<RwLock<Option<Arc<MatrixSdkClient>>>>>,
     pub streaming: MatrixStreamingConfig,
+    // Tracks (room_id, sender) pairs we have already replied to with a
+    // not-allowed notice, so a chatty non-allowed sender does not get
+    // spammed on every message.
+    pub denied_sender_ack: Arc<tokio::sync::Mutex<std::collections::HashSet<(String, String)>>>,
 }
 
 impl MatrixRuntimeContext {
@@ -249,6 +253,19 @@ impl MatrixRuntimeContext {
                 .allowed_user_ids
                 .iter()
                 .any(|v| v.eq_ignore_ascii_case(sender_user_id))
+    }
+
+    async fn note_denied_sender(&self, room_id: &str, sender: &str) -> bool {
+        let mut guard = self.denied_sender_ack.lock().await;
+        guard.insert((room_id.to_string(), sender.to_string()))
+    }
+
+    fn allowed_user_ids_pretty(&self) -> String {
+        if self.allowed_user_ids.is_empty() {
+            "(any user)".to_string()
+        } else {
+            self.allowed_user_ids.join(", ")
+        }
     }
 
     fn bot_localpart(&self) -> String {
@@ -340,6 +357,7 @@ pub fn build_matrix_runtime_contexts(config: &crate::config::Config) -> Vec<Matr
             backup_key: account_cfg.backup_key.clone(),
             sdk_client: None,
             streaming: matrix_cfg.streaming.clone(),
+            denied_sender_ack: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         });
     }
 
@@ -365,6 +383,7 @@ pub fn build_matrix_runtime_contexts(config: &crate::config::Config) -> Vec<Matr
             backup_key: matrix_cfg.backup_key,
             sdk_client: None,
             streaming: matrix_cfg.streaming.clone(),
+            denied_sender_ack: Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         });
     }
 
@@ -753,6 +772,21 @@ async fn auto_join_invited_rooms(client: &MatrixSdkClient) {
     }
 }
 
+async fn bootstrap_matrix_profile(client: &MatrixSdkClient, runtime: &MatrixRuntimeContext) {
+    let target_name = runtime.bot_username.trim();
+    if target_name.is_empty() {
+        return;
+    }
+    let current = client.account().get_display_name().await.ok().flatten();
+    if current.as_deref() == Some(target_name) {
+        return;
+    }
+    match client.account().set_display_name(Some(target_name)).await {
+        Ok(()) => info!("Matrix profile display name set to {target_name}"),
+        Err(e) => warn!("Matrix profile display name set failed: {e}"),
+    }
+}
+
 async fn start_matrix_e2ee_sync(app_state: Arc<AppState>, runtime: MatrixRuntimeContext) {
     let Some(slot) = runtime.sdk_client.as_ref() else {
         return;
@@ -764,6 +798,11 @@ async fn start_matrix_e2ee_sync(app_state: Arc<AppState>, runtime: MatrixRuntime
     let Some(client) = client else {
         return;
     };
+
+    // One-time profile bootstrap: align display name with runtime.bot_username
+    // so the bot shows up in Cinny with a deliberate name instead of the raw
+    // localpart. Idempotent: only sets when the server-side value differs.
+    bootstrap_matrix_profile(&client, &runtime).await;
 
     let bootstrapped = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let handler_state = app_state.clone();
@@ -827,6 +866,15 @@ async fn start_matrix_e2ee_sync(app_state: Arc<AppState>, runtime: MatrixRuntime
                 return;
             }
             if is_direct && !runtime.should_process_dm_sender(ev.sender.as_str()) {
+                // Reply once per (room, sender) so non-allowed users see why
+                // they get no response, instead of assuming the bot is broken.
+                if runtime.note_denied_sender(&room_id, ev.sender.as_str()).await {
+                    let body = format!(
+                        "Sorry, I only respond to: {}. Contact the operator if you need access.",
+                        runtime.allowed_user_ids_pretty()
+                    );
+                    let _ = send_matrix_text_runtime(&runtime, &room_id, &body, true).await;
+                }
                 return;
             }
             let msg = MatrixIncomingMessage {
@@ -2759,6 +2807,7 @@ mod tests {
             backup_key: String::new(),
             sdk_client: None,
             streaming: crate::channels::matrix::MatrixStreamingConfig::default(),
+            denied_sender_ack: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         };
 
         assert!(runtime.should_respond("hello there", true, false));
@@ -2781,6 +2830,7 @@ mod tests {
             backup_key: String::new(),
             sdk_client: None,
             streaming: crate::channels::matrix::MatrixStreamingConfig::default(),
+            denied_sender_ack: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         };
 
         assert!(runtime.should_process_dm_sender("@alice:localhost"));
@@ -2802,6 +2852,7 @@ mod tests {
             backup_key: String::new(),
             sdk_client: None,
             streaming: crate::channels::matrix::MatrixStreamingConfig::default(),
+            denied_sender_ack: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new())),
         };
 
         assert!(runtime.should_process_group_room("!group:localhost"));
