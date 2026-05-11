@@ -2340,7 +2340,38 @@ async fn handle_matrix_message(
         } else {
             None
         };
-    let mut tap = crate::channels::event_tap::EventTap::spawn(event_rx, injection_ack);
+    let crate::channels::event_tap::EventTap { replay_rx: tap_replay_rx, join: tap_join } =
+        crate::channels::event_tap::EventTap::spawn(event_rx, injection_ack);
+
+    // Live streaming: spawn the matrix-edit consumer BEFORE the agent
+    // loop so it drains events in real time, growing the message bubble
+    // as the agent emits TextDelta / ToolStart / ToolResult events.
+    // Without this, send_matrix_streaming_response was only called after
+    // the agent finished, replaying buffered events post-hoc and giving
+    // the user no visible progress during long tool loops.
+    let (streaming_handle, post_agent_rx): (
+        Option<tokio::task::JoinHandle<Result<String, String>>>,
+        Option<tokio::sync::mpsc::UnboundedReceiver<AgentEvent>>,
+    ) = if use_streaming {
+        let runtime_clone = runtime.clone();
+        let room_id_clone = msg.room_id.clone();
+        let cfg_clone = streaming_config.clone();
+        let prefer_sdk = msg.prefer_sdk_send;
+        let mut rx = tap_replay_rx;
+        let handle = tokio::spawn(async move {
+            send_matrix_streaming_response(
+                &runtime_clone,
+                &room_id_clone,
+                &mut rx,
+                &cfg_clone,
+                prefer_sdk,
+            )
+            .await
+        });
+        (Some(handle), None)
+    } else {
+        (None, Some(tap_replay_rx))
+    };
 
     match process_with_agent_with_events_guarded(
         &app_state,
@@ -2359,19 +2390,9 @@ async fn handle_matrix_message(
         Ok(response) => {
             drop(event_tx);
 
-            // Try streaming first if enabled
-            if use_streaming {
-                match send_matrix_streaming_response(
-                    &runtime,
-                    &msg.room_id,
-                    &mut tap.replay_rx,
-                    &streaming_config,
-                    msg.prefer_sdk_send,
-                )
-                .await
-                {
-                    Ok(streamed_response) => {
-                        // Store the streamed response
+            if let Some(handle) = streaming_handle {
+                match handle.await {
+                    Ok(Ok(streamed_response)) => {
                         if !streamed_response.is_empty() {
                             let bot_msg = StoredMessage {
                                 id: uuid::Uuid::new_v4().to_string(),
@@ -2386,23 +2407,29 @@ async fn handle_matrix_message(
                             })
                             .await;
                         }
+                        let _ = tap_join.await;
                         return;
                     }
+                    Ok(Err(e)) => {
+                        warn!("Matrix streaming failed, falling back to regular send: {}", e);
+                    }
                     Err(e) => {
-                        warn!(
-                            "Matrix streaming failed, falling back to regular send: {}",
-                            e
-                        );
-                        // Fall through to regular send below
+                        warn!("Matrix streaming task panicked: {}", e);
                     }
                 }
+                // Streaming failed; tap_replay_rx already consumed by task.
+                let used_send_message_tool = tap_join
+                    .await
+                    .map(|r| r.used_send_message_tool)
+                    .unwrap_or(false);
+                let _ = used_send_message_tool;
+                return;
             }
 
-            // Regular (non-streaming) handling. Drain whatever events the tap
-            // forwarded; `used_send_message_tool` is detected by the tap.
-            while tap.replay_rx.recv().await.is_some() {}
-            let used_send_message_tool = tap
-                .join
+            // Regular (non-streaming) handling: drain the replay buffer.
+            let mut rx = post_agent_rx.expect("post_agent_rx set when use_streaming=false");
+            while rx.recv().await.is_some() {}
+            let used_send_message_tool = tap_join
                 .await
                 .map(|r| r.used_send_message_tool)
                 .unwrap_or(false);
