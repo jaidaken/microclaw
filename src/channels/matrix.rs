@@ -1930,6 +1930,22 @@ fn render_active_tools_footer(active: &std::collections::HashMap<String, Vec<Str
     lines.join("\n")
 }
 
+/// Compose the body for an in-flight streaming bubble. Guarantees a visible
+/// indicator even when the model has not emitted any text yet, e.g. during
+/// long tool-only turns (deep scans, recursive grep, builds).
+fn render_streaming_body(
+    main_content: &str,
+    active: &std::collections::HashMap<String, Vec<String>>,
+) -> String {
+    let footer = render_active_tools_footer(active);
+    let trimmed = main_content.trim();
+    match (trimmed.is_empty(), footer.is_empty()) {
+        (false, _) => format!("{}{}", main_content, footer),
+        (true, false) => format!("Working...{}", footer),
+        (true, true) => "Working...".to_string(),
+    }
+}
+
 fn shorten_tool_input(name: &str, input: &serde_json::Value) -> String {
     match name {
         "bash" => input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -2074,7 +2090,7 @@ async fn send_matrix_streaming_response(
                         main_content.clone()
                     };
 
-                    let display_with_footer = format!("{}{}", display_content, render_active_tools_footer(&active_tools));
+                    let display_with_footer = render_streaming_body(&display_content, &active_tools);
                     if let Err(e) = edit_matrix_message(
                         &http_client,
                         &runtime.homeserver_url,
@@ -2162,7 +2178,8 @@ async fn send_matrix_streaming_response(
                     }
                 }
 
-                // Trigger immediate edit update if streaming
+                // Edit now so footer reflects the just-started tool; without
+                // this, tool-only turns blank the bubble while bash runs.
                 if let Some(ref mut state) = streaming_state {
                     if edit_count < max_edits {
                         let (main_content, _) = if streaming_config.reasoning_display
@@ -2172,14 +2189,14 @@ async fn send_matrix_streaming_response(
                         } else {
                             (accumulated_text.clone(), None)
                         };
-
+                        let body = render_streaming_body(&main_content, &active_tools);
                         let _ = edit_matrix_message(
                             &http_client,
                             &runtime.homeserver_url,
                             &runtime.access_token,
                             &state.room_id,
                             &state.initial_event_id,
-                            &main_content,
+                            &body,
                         )
                         .await;
                         edit_count += 1;
@@ -2203,14 +2220,14 @@ async fn send_matrix_streaming_response(
                             } else {
                                 (accumulated_text.clone(), None)
                             };
-                            let combined = format!("{}{}", main_content, render_active_tools_footer(&active_tools));
+                            let body = render_streaming_body(&main_content, &active_tools);
                             let _ = edit_matrix_message(
                                 &http_client,
                                 &runtime.homeserver_url,
                                 &runtime.access_token,
                                 &state.room_id,
                                 &state.initial_event_id,
-                                &combined,
+                                &body,
                             )
                             .await;
                             edit_count += 1;
@@ -2251,13 +2268,14 @@ async fn send_matrix_streaming_response(
                             } else {
                                 (accumulated_text.clone(), None)
                             };
+                            let body = render_streaming_body(&main_content, &active_tools);
                             let _ = edit_matrix_message(
                                 &http_client,
                                 &runtime.homeserver_url,
                                 &runtime.access_token,
                                 &state.room_id,
                                 &state.initial_event_id,
-                                &main_content,
+                                &body,
                             )
                             .await;
                             edit_count += 1;
