@@ -1,3 +1,6 @@
+// rustc 1.95+ trait-solver walks matrix-sdk deeper than the 256 default.
+#![recursion_limit = "1024"]
+
 pub mod a2a;
 pub mod acp;
 pub mod acp_subagent;
