@@ -300,7 +300,19 @@ impl MatrixRuntimeContext {
         }
 
         let localpart = self.bot_localpart().to_lowercase();
-        !localpart.is_empty() && text_lower.contains(&localpart)
+        if localpart.is_empty() {
+            return false;
+        }
+        // Require '@localpart' with a trailing non-identifier character so
+        // bare substrings like "clawing" do not trigger. Matches Matrix
+        // pill convention (the body text always has '@' before the mention).
+        let needle = format!("@{localpart}");
+        text_lower.split(&*needle).skip(1).any(|tail| {
+            tail.chars()
+                .next()
+                .map(|c| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(true)
+        })
     }
 }
 
@@ -2813,6 +2825,12 @@ mod tests {
         assert!(runtime.should_respond("hello there", true, false));
         assert!(!runtime.should_respond("hello there", false, false));
         assert!(runtime.should_respond("hello there", false, true));
+        // Word-boundary localpart match: @bot triggers, "robotic" should not.
+        assert!(runtime.should_respond("hi @bot what time is it", false, false));
+        assert!(!runtime.should_respond("robotics are fun", false, false));
+        assert!(!runtime.should_respond("bots are cool", false, false));
+        // Full mxid is also valid.
+        assert!(runtime.should_respond("ping @bot:localhost please", false, false));
     }
 
     #[test]
