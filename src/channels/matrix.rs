@@ -2056,7 +2056,8 @@ async fn send_matrix_streaming_response(
                                         let content =
                                             RoomMessageEventContent::text_plain("⏳ Thinking...");
                                         match room.send(content).await {
-                                            Ok(response) => response.event_id.to_string(),
+                                            // matrix-sdk 0.17: SendMessageLikeEventResult wraps `response`
+                                            Ok(result) => result.response.event_id.to_string(),
                                             Err(_) => {
                                                 // Fallback to HTTP
                                                 let payload = matrix_message_payload_for_text(
@@ -2185,7 +2186,7 @@ async fn send_matrix_streaming_response(
                                         let content =
                                             RoomMessageEventContent::text_plain("Working...");
                                         match room.send(content).await {
-                                            Ok(response) => response.event_id.to_string(),
+                                            Ok(result) => result.response.event_id.to_string(),
                                             Err(_) => {
                                                 let payload = matrix_message_payload_for_text(
                                                     "Working...",
