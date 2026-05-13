@@ -348,7 +348,7 @@ fn test_chat_and_messages_together() {
     let (db, dir) = test_db();
 
     // Upsert chat first
-    db.upsert_chat(100, Some("Test Group"), "group").unwrap();
+    db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 100, Some("Test Group"), "group").unwrap();
 
     // Store message
     db.store_message(&StoredMessage {
@@ -362,7 +362,7 @@ fn test_chat_and_messages_together() {
     .unwrap();
 
     // Update chat title
-    db.upsert_chat(100, Some("Renamed Group"), "group").unwrap();
+    db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 100, Some("Renamed Group"), "group").unwrap();
 
     // Messages still there
     let msgs = db.get_all_messages(100).unwrap();

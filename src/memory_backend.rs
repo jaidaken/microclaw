@@ -1377,6 +1377,7 @@ mod tests {
 
         async fn get_memories_for_context(
             &self,
+            _user_id: &str,
             _chat_id: i64,
             _limit: usize,
         ) -> Result<Vec<Memory>, MicroClawError> {
@@ -1404,6 +1405,7 @@ mod tests {
 
         async fn insert_memory_with_metadata(
             &self,
+            _user_id: &str,
             _chat_id: Option<i64>,
             _content: &str,
             _category: &str,
