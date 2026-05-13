@@ -231,7 +231,7 @@ pub(super) async fn api_metrics_history(
     Query(query): Query<MetricsHistoryQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    require_scope(&state, &headers, AuthScope::Operator).await?;
     persist_metrics_snapshot(&state).await?;
 
     let minutes = query.minutes.unwrap_or(24 * 60).clamp(1, 24 * 60 * 30);
@@ -282,7 +282,7 @@ pub(super) async fn api_subagents_observability(
     Query(query): Query<SubagentObservabilityQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
 
     let scope = query
         .scope
@@ -291,10 +291,18 @@ pub(super) async fn api_subagents_observability(
         .trim()
         .to_ascii_lowercase();
     let chat_id_filter = if scope == "global" {
+        if !identity.is_operator() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "forbidden: global scope is operator-only".into(),
+            ));
+        }
         None
     } else {
         let session_key = normalize_session_key(query.session_key.as_deref());
-        Some(resolve_chat_id_for_session_key_read(&state, &session_key).await?)
+        let cid = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+        assert_chat_visible_to_caller(&state, &identity, &headers, cid).await?;
+        Some(cid)
     };
     let limit = query.limit.unwrap_or(30).clamp(1, 200);
     let snapshot = call_blocking(state.app_state.db.clone(), move |db| {

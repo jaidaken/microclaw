@@ -1619,10 +1619,11 @@ async fn api_usage(
     Query(query): Query<UsageQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
 
     let session_key = normalize_session_key(query.session_key.as_deref());
     let chat_id = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+    assert_chat_visible_to_caller(&state, &identity, &headers, chat_id).await?;
     let report = build_usage_report(state.app_state.db.clone(), chat_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -1673,7 +1674,7 @@ async fn api_memory_observability(
     Query(query): Query<MemoryObservabilityQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
 
     let scope = query
         .scope
@@ -1687,10 +1688,18 @@ async fn api_memory_observability(
     let since = (chrono::Utc::now() - chrono::Duration::hours(hours as i64)).to_rfc3339();
 
     let chat_id_filter = if scope == "global" {
+        if !identity.is_operator() {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "forbidden: global scope is operator-only".into(),
+            ));
+        }
         None
     } else {
         let session_key = normalize_session_key(query.session_key.as_deref());
-        Some(resolve_chat_id_for_session_key_read(&state, &session_key).await?)
+        let cid = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+        assert_chat_visible_to_caller(&state, &identity, &headers, cid).await?;
+        Some(cid)
     };
 
     let summary = call_blocking(state.app_state.db.clone(), move |db| {
@@ -2115,7 +2124,7 @@ async fn api_audit_logs(
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Admin).await?;
+    require_scope(&state, &headers, AuthScope::Operator).await?;
     let limit = query.limit.unwrap_or(200).clamp(1, 2000);
     let kind = query.kind.map(|k| k.trim().to_string());
     let rows = call_blocking(state.app_state.db.clone(), move |db| {
@@ -5950,5 +5959,121 @@ commands:
         );
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn member_cannot_read_other_user_memories() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        let db = web_state.app_state.db.clone();
+        call_blocking(db, |d| {
+            d.upsert_chat("user-alice", 7000, Some("alice-main"), "web")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        seed_test_api_key_with_scopes(
+            &web_state,
+            "member-token-bob",
+            &["member.self".to_string()],
+        )
+        .await;
+
+        let app = build_router(web_state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/memory_observability?session_key=alice-main&scope=chat")
+            .header("authorization", "Bearer member-token-bob")
+            .header("X-Clawchat-User-Id", "user-bob")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn operator_sees_all_user_memories() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        let db = web_state.app_state.db.clone();
+        call_blocking(db, |d| {
+            d.upsert_chat("user-alice", 7100, Some("alice-main-op"), "web")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        seed_test_api_key(&web_state, "operator-token-op1").await;
+
+        let app = build_router(web_state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/memory_observability?session_key=alice-main-op&scope=chat")
+            .header("authorization", "Bearer operator-token-op1")
+            .header("X-Clawchat-User-Id", "user-operator")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn member_audit_endpoint_denied() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        seed_test_api_key_with_scopes(
+            &web_state,
+            "member-token-audit",
+            &["member.self".to_string()],
+        )
+        .await;
+
+        let app = build_router(web_state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/audit")
+            .header("authorization", "Bearer member-token-audit")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn member_metrics_history_denied() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        seed_test_api_key_with_scopes(
+            &web_state,
+            "member-token-metrics",
+            &["member.self".to_string()],
+        )
+        .await;
+
+        let app = build_router(web_state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/metrics/history")
+            .header("authorization", "Bearer member-token-metrics")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn member_memory_observability_global_scope_denied() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        seed_test_api_key_with_scopes(
+            &web_state,
+            "member-token-global",
+            &["member.self".to_string()],
+        )
+        .await;
+
+        let app = build_router(web_state);
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/memory_observability?scope=global")
+            .header("authorization", "Bearer member-token-global")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 }

@@ -11,7 +11,10 @@ pub(super) enum AuthScope {
     Write,
     Admin,
     Approvals,
+    Operator,
 }
+
+pub(super) const MEMBER_SELF_SCOPE: &str = "member.self";
 
 #[derive(Clone, Debug)]
 pub(super) struct AuthIdentity {
@@ -21,15 +24,27 @@ pub(super) struct AuthIdentity {
 
 impl AuthIdentity {
     pub(super) fn allows(&self, required: AuthScope) -> bool {
-        let want = match required {
-            AuthScope::Read => "operator.read",
-            AuthScope::Write => "operator.write",
-            AuthScope::Admin => "operator.admin",
-            AuthScope::Approvals => "operator.approvals",
-        };
-        self.scopes
-            .iter()
-            .any(|s| s == "operator.admin" || s == want)
+        let has_admin = self.scopes.iter().any(|s| s == "operator.admin");
+        if has_admin {
+            return true;
+        }
+        let has_member = self.scopes.iter().any(|s| s == MEMBER_SELF_SCOPE);
+        match required {
+            AuthScope::Read => {
+                has_member || self.scopes.iter().any(|s| s == "operator.read")
+            }
+            AuthScope::Write => {
+                has_member || self.scopes.iter().any(|s| s == "operator.write")
+            }
+            AuthScope::Approvals => {
+                has_member || self.scopes.iter().any(|s| s == "operator.approvals")
+            }
+            AuthScope::Admin | AuthScope::Operator => false,
+        }
+    }
+
+    pub(super) fn is_operator(&self) -> bool {
+        self.scopes.iter().any(|s| s == "operator.admin")
     }
 }
 
@@ -226,6 +241,31 @@ fn api_key_limits(config: &Config) -> (usize, Duration) {
         return (max, Duration::from_secs(secs));
     }
     (240, Duration::from_secs(60))
+}
+
+pub(super) async fn assert_chat_visible_to_caller(
+    state: &WebState,
+    identity: &AuthIdentity,
+    headers: &HeaderMap,
+    chat_id: i64,
+) -> Result<(), (StatusCode, String)> {
+    if identity.is_operator() {
+        return Ok(());
+    }
+    let caller = super::extract_user_id(headers)?;
+    let owner = call_blocking(state.app_state.db.clone(), move |db| {
+        db.get_chat_user_id(chat_id)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    match owner {
+        Some(o) if o == caller => Ok(()),
+        Some(_) => Err((
+            StatusCode::FORBIDDEN,
+            "forbidden: chat does not belong to caller".into(),
+        )),
+        None => Err((StatusCode::NOT_FOUND, "session not found".into())),
+    }
 }
 
 pub(super) async fn require_scope(
