@@ -1335,11 +1335,13 @@ async fn handle_slack_message(
     }
 
     let slack_chat_type = if is_dm { "private" } else { "group" };
+    let slack_user_id = microclaw_core::tenant::bootstrap_user_id();
     let turn_guard = match app_state
         .chat_turn_queue
         .try_start_or_enqueue(
             &runtime.channel_name,
             chat_id,
+            &slack_user_id,
             PendingMessage {
                 sender_name: user.to_string(),
                 content: text.to_string(),
@@ -1492,7 +1494,13 @@ async fn handle_slack_message(
     }
 
     // If messages were queued during this run, re-dispatch to process them.
-    maybe_rerun_for_pending(app_state, &runtime.channel_name, chat_id, slack_chat_type);
+    maybe_rerun_for_pending(
+        app_state,
+        &runtime.channel_name,
+        chat_id,
+        slack_chat_type,
+        &slack_user_id,
+    );
 }
 
 #[cfg(test)]

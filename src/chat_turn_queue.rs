@@ -1,17 +1,10 @@
-//! Per-chat turn serialization and message coalescing.
-//!
-//! `ChatTurnQueue` ensures at most one agent run is active per (channel, chat_id)
-//! at any time. Messages arriving while a run is active are queued and coalesced
-//! after the run completes.
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-/// Key identifying a specific chat across channels.
-type ChatKey = (String, i64);
+type ChatKey = (String, i64, String);
 
 /// A message that arrived while an agent run was active for the same chat.
 #[derive(Debug, Clone)]
@@ -53,6 +46,7 @@ impl Drop for TurnGuard {
         debug!(
             channel = %self.key.0,
             chat_id = self.key.1,
+            user_id = %self.key.2,
             "Chat turn released"
         );
     }
@@ -109,8 +103,9 @@ impl ChatTurnQueue {
         self: &Arc<Self>,
         channel: &str,
         chat_id: i64,
+        user_id: &str,
     ) -> Option<TurnGuard> {
-        let key: ChatKey = (channel.to_string(), chat_id);
+        let key: ChatKey = (channel.to_string(), chat_id, user_id.to_string());
         let slot_arc = self.get_slot(&key).await;
 
         let turn_lock = {
@@ -118,7 +113,6 @@ impl ChatTurnQueue {
             slot.turn_lock.clone()
         };
 
-        // Acquire with timeout to prevent deadlock (e.g., recursive same-chat calls).
         let guard = match tokio::time::timeout(Duration::from_secs(60), turn_lock.lock_owned()).await
         {
             Ok(guard) => guard,
@@ -126,6 +120,7 @@ impl ChatTurnQueue {
                 warn!(
                     channel = %key.0,
                     chat_id = key.1,
+                    user_id = %key.2,
                     "ChatTurnQueue: timeout waiting for turn lock (60s); proceeding without lock"
                 );
                 return None;
@@ -137,11 +132,7 @@ impl ChatTurnQueue {
             slot.last_active = Instant::now();
         }
 
-        debug!(
-            channel,
-            chat_id,
-            "Chat turn acquired"
-        );
+        debug!(channel, chat_id, user_id, "Chat turn acquired");
 
         Some(TurnGuard {
             _guard: guard,
@@ -157,31 +148,29 @@ impl ChatTurnQueue {
         &self,
         channel: &str,
         chat_id: i64,
+        user_id: &str,
         msg: PendingMessage,
     ) -> bool {
-        let key: ChatKey = (channel.to_string(), chat_id);
+        let key: ChatKey = (channel.to_string(), chat_id, user_id.to_string());
         let slot_arc = {
             let slots = self.slots.lock().await;
             match slots.get(&key) {
                 Some(arc) => arc.clone(),
-                None => return false, // no slot means no active run
+                None => return false,
             }
         };
 
         let mut slot = slot_arc.lock().await;
-        // Check if turn_lock is currently held (i.e., a run is active)
         if slot.turn_lock.try_lock().is_ok() {
-            // Lock was not held -> no active run
             return false;
         }
 
-        // Run is active; queue the message
         if slot.pending_messages.len() >= self.max_pending {
-            // Drop oldest to make room
             slot.pending_messages.remove(0);
             warn!(
                 channel,
                 chat_id,
+                user_id,
                 max_pending = self.max_pending,
                 "ChatTurnQueue: pending messages at capacity; dropped oldest"
             );
@@ -190,6 +179,7 @@ impl ChatTurnQueue {
         info!(
             channel,
             chat_id,
+            user_id,
             sender = %msg.sender_name,
             pending_count = slot.pending_messages.len() + 1,
             "Message queued while chat turn is active"
@@ -209,9 +199,10 @@ impl ChatTurnQueue {
         self: &Arc<Self>,
         channel: &str,
         chat_id: i64,
+        user_id: &str,
         msg: PendingMessage,
     ) -> Option<TurnGuard> {
-        let key: ChatKey = (channel.to_string(), chat_id);
+        let key: ChatKey = (channel.to_string(), chat_id, user_id.to_string());
         let slot_arc = self.get_slot(&key).await;
 
         let turn_lock = {
@@ -221,20 +212,19 @@ impl ChatTurnQueue {
 
         match turn_lock.try_lock_owned() {
             Ok(guard) => {
-                // No active run — we start a new turn.
                 let mut slot = slot_arc.lock().await;
                 slot.last_active = Instant::now();
-                debug!(channel, chat_id, "Chat turn acquired");
+                debug!(channel, chat_id, user_id, "Chat turn acquired");
                 Some(TurnGuard { _guard: guard, key })
             }
             Err(_) => {
-                // A run is active — queue the message.
                 let mut slot = slot_arc.lock().await;
                 if slot.pending_messages.len() >= self.max_pending {
                     slot.pending_messages.remove(0);
                     warn!(
                         channel,
                         chat_id,
+                        user_id,
                         max_pending = self.max_pending,
                         "ChatTurnQueue: pending messages at capacity; dropped oldest"
                     );
@@ -242,6 +232,7 @@ impl ChatTurnQueue {
                 info!(
                     channel,
                     chat_id,
+                    user_id,
                     sender = %msg.sender_name,
                     pending_count = slot.pending_messages.len() + 1,
                     "Message queued while chat turn is active"
@@ -254,8 +245,13 @@ impl ChatTurnQueue {
 
     /// Drain all pending messages accumulated during the current turn.
     /// Returns them in arrival order.
-    pub async fn drain_pending(&self, channel: &str, chat_id: i64) -> Vec<PendingMessage> {
-        let key: ChatKey = (channel.to_string(), chat_id);
+    pub async fn drain_pending(
+        &self,
+        channel: &str,
+        chat_id: i64,
+        user_id: &str,
+    ) -> Vec<PendingMessage> {
+        let key: ChatKey = (channel.to_string(), chat_id, user_id.to_string());
         let slot_arc = {
             let slots = self.slots.lock().await;
             match slots.get(&key) {
@@ -287,14 +283,15 @@ mod tests {
         }
     }
 
+    const U: &str = "u1";
+
     #[tokio::test]
     async fn test_acquire_release_basic() {
         let q = make_queue();
-        let guard = q.acquire("telegram", 1).await;
+        let guard = q.acquire("telegram", 1, U).await;
         assert!(guard.is_some());
         drop(guard);
-        // Can acquire again
-        let guard2 = q.acquire("telegram", 1).await;
+        let guard2 = q.acquire("telegram", 1, U).await;
         assert!(guard2.is_some());
     }
 
@@ -303,24 +300,19 @@ mod tests {
         let q = make_queue();
         let counter = Arc::new(AtomicUsize::new(0));
 
-        let guard = q.acquire("tg", 1).await.unwrap();
+        let guard = q.acquire("tg", 1, U).await.unwrap();
         let q2 = q.clone();
         let c2 = counter.clone();
 
-        // Spawn a task that tries to acquire the same chat
         let handle = tokio::spawn(async move {
-            let _g = q2.acquire("tg", 1).await;
+            let _g = q2.acquire("tg", 1, U).await;
             c2.fetch_add(1, Ordering::SeqCst);
         });
 
-        // Give the spawned task time to attempt acquire
         tokio::time::sleep(Duration::from_millis(50)).await;
-        // It should still be blocked
         assert_eq!(counter.load(Ordering::SeqCst), 0);
 
-        // Release the first guard
         drop(guard);
-        // Now the spawned task should complete
         handle.await.unwrap();
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
@@ -328,33 +320,32 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_if_busy_returns_true_when_active() {
         let q = make_queue();
-        let _guard = q.acquire("tg", 1).await.unwrap();
+        let _guard = q.acquire("tg", 1, U).await.unwrap();
 
-        let queued = q.enqueue_if_busy("tg", 1, make_msg("hello")).await;
+        let queued = q.enqueue_if_busy("tg", 1, U, make_msg("hello")).await;
         assert!(queued);
 
-        let queued2 = q.enqueue_if_busy("tg", 1, make_msg("world")).await;
+        let queued2 = q.enqueue_if_busy("tg", 1, U, make_msg("world")).await;
         assert!(queued2);
     }
 
     #[tokio::test]
     async fn test_enqueue_if_busy_returns_false_when_idle() {
         let q = make_queue();
-        // No active run
-        let queued = q.enqueue_if_busy("tg", 1, make_msg("hello")).await;
+        let queued = q.enqueue_if_busy("tg", 1, U, make_msg("hello")).await;
         assert!(!queued);
     }
 
     #[tokio::test]
     async fn test_drain_pending_returns_all() {
         let q = make_queue();
-        let _guard = q.acquire("tg", 1).await.unwrap();
+        let _guard = q.acquire("tg", 1, U).await.unwrap();
 
-        q.enqueue_if_busy("tg", 1, make_msg("a")).await;
-        q.enqueue_if_busy("tg", 1, make_msg("b")).await;
-        q.enqueue_if_busy("tg", 1, make_msg("c")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("a")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("b")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("c")).await;
 
-        let pending = q.drain_pending("tg", 1).await;
+        let pending = q.drain_pending("tg", 1, U).await;
         assert_eq!(pending.len(), 3);
         assert_eq!(pending[0].content, "a");
         assert_eq!(pending[1].content, "b");
@@ -364,12 +355,12 @@ mod tests {
     #[tokio::test]
     async fn test_drain_clears_queue() {
         let q = make_queue();
-        let _guard = q.acquire("tg", 1).await.unwrap();
+        let _guard = q.acquire("tg", 1, U).await.unwrap();
 
-        q.enqueue_if_busy("tg", 1, make_msg("a")).await;
-        let _ = q.drain_pending("tg", 1).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("a")).await;
+        let _ = q.drain_pending("tg", 1, U).await;
 
-        let pending = q.drain_pending("tg", 1).await;
+        let pending = q.drain_pending("tg", 1, U).await;
         assert!(pending.is_empty());
     }
 
@@ -378,13 +369,12 @@ mod tests {
         let q = make_queue();
         let counter = Arc::new(AtomicUsize::new(0));
 
-        let _guard_chat1 = q.acquire("tg", 1).await.unwrap();
+        let _guard_chat1 = q.acquire("tg", 1, U).await.unwrap();
         let q2 = q.clone();
         let c2 = counter.clone();
 
-        // Different chat should not block
         let handle = tokio::spawn(async move {
-            let _g = q2.acquire("tg", 2).await;
+            let _g = q2.acquire("tg", 2, U).await;
             c2.fetch_add(1, Ordering::SeqCst);
         });
 
@@ -395,18 +385,54 @@ mod tests {
     #[tokio::test]
     async fn test_max_pending_drops_oldest() {
         let q = Arc::new(ChatTurnQueue::new(3));
-        let _guard = q.acquire("tg", 1).await.unwrap();
+        let _guard = q.acquire("tg", 1, U).await.unwrap();
 
-        q.enqueue_if_busy("tg", 1, make_msg("a")).await;
-        q.enqueue_if_busy("tg", 1, make_msg("b")).await;
-        q.enqueue_if_busy("tg", 1, make_msg("c")).await;
-        // This should drop "a"
-        q.enqueue_if_busy("tg", 1, make_msg("d")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("a")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("b")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("c")).await;
+        q.enqueue_if_busy("tg", 1, U, make_msg("d")).await;
 
-        let pending = q.drain_pending("tg", 1).await;
+        let pending = q.drain_pending("tg", 1, U).await;
         assert_eq!(pending.len(), 3);
         assert_eq!(pending[0].content, "b");
         assert_eq!(pending[1].content, "c");
         assert_eq!(pending[2].content, "d");
+    }
+
+    #[tokio::test]
+    async fn two_users_acquire_same_chat_id_independently() {
+        let q = make_queue();
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let guard_u1 = q.acquire("web", 7, "u1").await.unwrap();
+        let q2 = q.clone();
+        let c2 = counter.clone();
+
+        let handle = tokio::spawn(async move {
+            let g = q2.acquire("web", 7, "u2").await;
+            assert!(g.is_some(), "u2 must not block on u1's lock");
+            c2.fetch_add(1, Ordering::SeqCst);
+        });
+
+        handle.await.unwrap();
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+        drop(guard_u1);
+    }
+
+    #[tokio::test]
+    async fn drain_pending_isolated_per_user() {
+        let q = make_queue();
+        let _g_u1 = q.acquire("web", 9, "u1").await.unwrap();
+        let _g_u2 = q.acquire("web", 9, "u2").await.unwrap();
+
+        q.enqueue_if_busy("web", 9, "u1", make_msg("u1-a")).await;
+        q.enqueue_if_busy("web", 9, "u2", make_msg("u2-a")).await;
+
+        let p1 = q.drain_pending("web", 9, "u1").await;
+        let p2 = q.drain_pending("web", 9, "u2").await;
+        assert_eq!(p1.len(), 1);
+        assert_eq!(p1[0].content, "u1-a");
+        assert_eq!(p2.len(), 1);
+        assert_eq!(p2[0].content, "u2-a");
     }
 }

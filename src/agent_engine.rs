@@ -168,7 +168,7 @@ pub async fn process_with_agent_with_events_guarded(
         None => {
             state
                 .chat_turn_queue
-                .acquire(context.caller_channel, context.chat_id)
+                .acquire(context.caller_channel, context.chat_id, &context.user_id)
                 .await
         }
     };
@@ -221,21 +221,28 @@ pub async fn process_with_agent_with_events_guarded(
 ///
 /// Channel adapters should call this after `process_with_agent_with_events`
 /// returns, passing the `Arc<AppState>` they already hold.
-pub fn maybe_rerun_for_pending(state: Arc<AppState>, channel: &str, chat_id: i64, chat_type: &str) {
+pub fn maybe_rerun_for_pending(
+    state: Arc<AppState>,
+    channel: &str,
+    chat_id: i64,
+    chat_type: &str,
+    user_id: &str,
+) {
     let channel = channel.to_string();
     let chat_type = chat_type.to_string();
+    let user_id = user_id.to_string();
     tokio::spawn(async move {
-        // Check if there are pending messages (already drained by the previous call).
-        // The agent run will pick them up via get_new_user_messages_since because
-        // the channel adapter already stored them in DB.
-        // We just need to trigger a new run.
-        let pending = state.chat_turn_queue.drain_pending(&channel, chat_id).await;
+        let pending = state
+            .chat_turn_queue
+            .drain_pending(&channel, chat_id, &user_id)
+            .await;
         if pending.is_empty() {
             return;
         }
         info!(
             chat_id,
             channel = %channel,
+            user_id = %user_id,
             pending_count = pending.len(),
             "Queue-then-rerun: starting new agent run for pending messages"
         );
@@ -243,12 +250,13 @@ pub fn maybe_rerun_for_pending(state: Arc<AppState>, channel: &str, chat_id: i64
             caller_channel: &channel,
             chat_id,
             chat_type: &chat_type,
-            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
+            user_id: std::borrow::Cow::Borrowed(&user_id),
         };
         if let Err(e) = process_with_agent_with_events(&state, ctx, None, None, None).await {
             warn!(
                 chat_id,
                 channel = %channel,
+                user_id = %user_id,
                 "Queue-then-rerun dispatch failed: {e}"
             );
         }
@@ -1315,7 +1323,7 @@ async fn process_with_agent_logic(
             if state.config.enable_mid_turn_injection && has_displayable_output {
                 let pending = state
                     .chat_turn_queue
-                    .drain_pending(context.caller_channel, chat_id)
+                    .drain_pending(context.caller_channel, chat_id, &context.user_id)
                     .await;
                 let pending: Vec<_> = pending
                     .into_iter()
@@ -1655,7 +1663,7 @@ async fn process_with_agent_logic(
             if state.config.enable_mid_turn_injection {
                 let pending = state
                     .chat_turn_queue
-                    .drain_pending(context.caller_channel, chat_id)
+                    .drain_pending(context.caller_channel, chat_id, &context.user_id)
                     .await;
                 let pending: Vec<_> = pending
                     .into_iter()

@@ -1062,12 +1062,13 @@ async fn handle_message(
         }
     }
 
-    // Atomically try to start a turn or queue the message if a turn is active.
+    let tg_user_id = microclaw_core::tenant::bootstrap_user_id();
     let turn_guard = match state
         .chat_turn_queue
         .try_start_or_enqueue(
             &tg_channel_name,
             chat_id,
+            &tg_user_id,
             PendingMessage {
                 sender_name: sender_name.clone(),
                 content: stored_content.clone(),
@@ -1289,7 +1290,13 @@ async fn handle_message(
     }
 
     // If messages were queued during this run, re-dispatch to process them.
-    maybe_rerun_for_pending(state, &tg_channel_name, chat_id, runtime_chat_type);
+    maybe_rerun_for_pending(
+        state,
+        &tg_channel_name,
+        chat_id,
+        runtime_chat_type,
+        &tg_user_id,
+    );
 
     Ok(())
 }

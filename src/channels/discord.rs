@@ -631,12 +631,14 @@ impl EventHandler for Handler {
         } else {
             "private"
         };
+        let discord_user_id = microclaw_core::tenant::bootstrap_user_id();
         let turn_guard = match self
             .app_state
             .chat_turn_queue
             .try_start_or_enqueue(
                 &self.runtime.channel_name,
                 channel_id,
+                &discord_user_id,
                 PendingMessage {
                     sender_name: sender_name.clone(),
                     content: text.clone(),
@@ -800,6 +802,7 @@ impl EventHandler for Handler {
             &self.runtime.channel_name,
             channel_id,
             discord_chat_type,
+            &discord_user_id,
         );
     }
 
