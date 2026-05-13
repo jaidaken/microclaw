@@ -130,6 +130,47 @@ fn distinct_users_can_share_session_key_label() {
 }
 
 #[test]
+fn delete_user_data_purges_chats_memories_usage_for_target_user_only() {
+    let (db, dir) = test_db();
+
+    let alice = "user-alice";
+    let bob = "user-bob";
+    let alice_chat = db
+        .resolve_or_create_chat_id(alice, "web", "alice-main", Some("alice-main"), "web")
+        .unwrap();
+    let bob_chat = db
+        .resolve_or_create_chat_id(bob, "web", "bob-main", Some("bob-main"), "web")
+        .unwrap();
+
+    db.insert_memory_with_metadata(alice, Some(alice_chat), "alice fact", "KNOWLEDGE", "explicit", 0.9)
+        .unwrap();
+    db.insert_memory_with_metadata(bob, Some(bob_chat), "bob fact", "KNOWLEDGE", "explicit", 0.9)
+        .unwrap();
+    db.log_llm_usage(alice, alice_chat, "web", "anthropic", "claude-test", 100, 50, "agent_loop")
+        .unwrap();
+    db.log_llm_usage(bob, bob_chat, "web", "anthropic", "claude-test", 200, 80, "agent_loop")
+        .unwrap();
+
+    let rows = db.delete_user_data(alice).unwrap();
+    assert!(rows > 0);
+
+    assert_eq!(db.get_chat_user_id(alice_chat).unwrap(), None);
+    assert_eq!(db.get_chat_user_id(bob_chat).unwrap().as_deref(), Some(bob));
+
+    let alice_mems = db.get_memories_for_context(alice, alice_chat, 100).unwrap();
+    let bob_mems = db.get_memories_for_context(bob, bob_chat, 100).unwrap();
+    assert!(alice_mems.is_empty(), "alice memories should be purged");
+    assert_eq!(bob_mems.len(), 1, "bob memories untouched");
+
+    let alice_usage = db.get_llm_usage_summary(Some(alice_chat)).unwrap();
+    let bob_usage = db.get_llm_usage_summary(Some(bob_chat)).unwrap();
+    assert_eq!(alice_usage.input_tokens, 0);
+    assert_eq!(bob_usage.input_tokens, 200);
+
+    cleanup(&dir);
+}
+
+#[test]
 fn cross_user_chat_owner_lookup_returns_correct_user() {
     let (db, dir) = test_db();
 

@@ -2178,6 +2178,46 @@ async fn api_audit_logs(
     Ok(Json(json!({"ok": true, "logs": logs})))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/user_data",
+    description = "Deletes all per-user data (chats, messages, sessions, memories, usage) for the X-Clawchat-User-Id header value. Operator only.",
+    operation_id = "system_delete_user_data",
+    tag = "system",
+    responses(
+        (status = 200, description = "Per-user data deleted; returns row count"),
+        (status = 400, description = "Missing X-Clawchat-User-Id header", body = String),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 403, description = "Operator scope required", body = String),
+    ),
+)]
+async fn api_delete_user_data(
+    headers: HeaderMap,
+    State(state): State<WebState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    metrics_http_inc(&state).await;
+    let identity = require_scope(&state, &headers, AuthScope::Operator).await?;
+    let target_user = extract_user_id(&headers)?;
+    let user_for_audit = target_user.clone();
+    let rows = call_blocking(state.app_state.db.clone(), move |db| {
+        db.delete_user_data(&target_user)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    audit_log(
+        &state,
+        "operator",
+        &identity.actor,
+        "user_data.delete",
+        Some(&user_for_audit),
+        "ok",
+        Some(&format!("rows={rows}")),
+        Some(&user_for_audit),
+    )
+    .await;
+    Ok(Json(json!({"ok": true, "deleted_rows": rows})))
+}
+
 pub async fn start_web_server(state: Arc<AppState>) {
     let limits = WebLimits::from_config(&state.config);
     let flush_interval = metrics_flush_interval(&state.config);
@@ -2322,6 +2362,7 @@ fn build_router(web_state: WebState) -> Router {
         .routes(routes!(sessions::api_sessions_tree))
         .routes(routes!(sessions::api_sessions_fork))
         .routes(routes!(api_audit_logs))
+        .routes(routes!(api_delete_user_data))
         .routes(routes!(sessions::api_history))
         .routes(routes!(api_usage))
         .routes(routes!(api_memory_observability))

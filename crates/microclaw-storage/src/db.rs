@@ -2902,6 +2902,65 @@ impl Database {
         Ok(affected > 0)
     }
 
+    pub fn delete_user_data(&self, user_id: &str) -> Result<usize, MicroClawError> {
+        let conn = self.lock_conn();
+        let tx = conn.unchecked_transaction()?;
+        let mut affected = 0usize;
+
+        affected += tx.execute(
+            "DELETE FROM llm_usage_logs WHERE user_id = ?1",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_supersede_edges
+             WHERE from_memory_id IN (SELECT id FROM memories WHERE user_id = ?1)
+                OR to_memory_id IN (SELECT id FROM memories WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memories WHERE user_id = ?1",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM sessions
+             WHERE chat_id IN (SELECT chat_id FROM chats WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM messages
+             WHERE chat_id IN (SELECT chat_id FROM chats WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM scheduled_tasks
+             WHERE chat_id IN (SELECT chat_id FROM chats WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_reflector_state
+             WHERE chat_id IN (SELECT chat_id FROM chats WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_reflector_runs
+             WHERE chat_id IN (SELECT chat_id FROM chats WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "DELETE FROM memory_injection_logs
+             WHERE chat_id IN (SELECT chat_id FROM chats WHERE user_id = ?1)",
+            params![user_id],
+        )?;
+        affected += tx.execute(
+            "UPDATE audit_logs SET subject_user_id = NULL WHERE subject_user_id = ?1",
+            params![user_id],
+        )?;
+        affected += tx.execute("DELETE FROM chats WHERE user_id = ?1", params![user_id])?;
+
+        tx.commit()?;
+        Ok(affected)
+    }
+
     pub fn delete_chat_data(&self, chat_id: i64) -> Result<bool, MicroClawError> {
         let conn = self.lock_conn();
         let tx = conn.unchecked_transaction()?;
