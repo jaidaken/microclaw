@@ -15,8 +15,6 @@ use crate::channels::discord::{build_discord_runtime_contexts, DiscordRuntimeCon
 use crate::channels::email::{build_email_runtime_contexts, EmailRuntimeContext};
 use crate::channels::feishu::{build_feishu_runtime_contexts, FeishuRuntimeContext};
 use crate::channels::imessage::{build_imessage_runtime_contexts, IMessageRuntimeContext};
-#[cfg(feature = "channel-matrix")]
-use crate::channels::matrix::{build_matrix_runtime_contexts, MatrixRuntimeContext};
 use crate::channels::nostr::{build_nostr_runtime_contexts, NostrRuntimeContext};
 use crate::channels::qq::{build_qq_runtime_contexts, QQRuntimeContext};
 use crate::channels::signal::{build_signal_runtime_contexts, SignalRuntimeContext};
@@ -27,8 +25,6 @@ use crate::channels::telegram::{
 use crate::channels::weixin::{build_weixin_runtime_contexts, WeixinRuntimeContext};
 use crate::channels::whatsapp::{build_whatsapp_runtime_contexts, WhatsAppRuntimeContext};
 use crate::channels::DiscordAdapter;
-#[cfg(feature = "channel-matrix")]
-use crate::channels::MatrixAdapter;
 use crate::channels::{
     DingTalkAdapter, EmailAdapter, FeishuAdapter, IMessageAdapter, IrcAdapter, NostrAdapter,
     QQAdapter, SignalAdapter, SlackAdapter, TelegramAdapter, WeixinAdapter, WhatsAppAdapter,
@@ -49,12 +45,11 @@ use microclaw_observability::metrics::OtlpMetricExporter;
 use microclaw_observability::traces::OtlpTraceExporter;
 use microclaw_storage::db::Database;
 
-#[cfg(not(feature = "channel-matrix"))]
-fn warn_missing_feature(config: &Config, channel_key: &str, feature_name: &str) {
+fn warn_disabled_channel(config: &Config, channel_key: &str) {
     if config.channel_enabled(channel_key) {
         warn!(
-            "Channel '{}' is enabled in config, but this binary was built without the '{}' feature",
-            channel_key, feature_name
+            "Channel '{}' is enabled in config, but support for it was removed from this build",
+            channel_key
         );
     }
 }
@@ -238,24 +233,7 @@ pub async fn run(
                 .map(|model| (runtime.channel_name.clone(), model))
         },
     );
-    #[cfg(feature = "channel-matrix")]
-    let matrix_runtimes: Vec<MatrixRuntimeContext> = prepare_channel_runtimes(
-        &config,
-        "matrix",
-        &mut registry,
-        &mut llm_model_overrides,
-        build_matrix_runtime_contexts,
-        |runtime, reg| {
-            reg.register(Arc::new(MatrixAdapter::new(
-                runtime.channel_name.clone(),
-                runtime.homeserver_url.clone(),
-                runtime.access_token.clone(),
-            )));
-        },
-        |_| None,
-    );
-    #[cfg(not(feature = "channel-matrix"))]
-    warn_missing_feature(&config, "matrix", "channel-matrix");
+    warn_disabled_channel(&config, "matrix");
     let whatsapp_runtimes: Vec<WhatsAppRuntimeContext> = prepare_channel_runtimes(
         &config,
         "whatsapp",
@@ -607,25 +585,6 @@ pub async fn run(
         );
     }
 
-    #[cfg(feature = "channel-matrix")]
-    let has_matrix = !matrix_runtimes.is_empty();
-    #[cfg(not(feature = "channel-matrix"))]
-    let has_matrix = false;
-    #[cfg(feature = "channel-matrix")]
-    if has_matrix {
-        spawn_channel_runtimes(
-            state.clone(),
-            matrix_runtimes,
-            |channel_state, runtime_ctx| async move {
-                info!(
-                    "Starting Matrix bot adapter '{}' as {}",
-                    runtime_ctx.channel_name, runtime_ctx.bot_user_id
-                );
-                crate::channels::matrix::start_matrix_bot(channel_state, runtime_ctx).await;
-            },
-        );
-    }
-
     let has_whatsapp = !whatsapp_runtimes.is_empty();
     if has_whatsapp {
         spawn_channel_runtimes(
@@ -773,7 +732,6 @@ pub async fn run(
         has_discord,
         has_slack,
         has_feishu,
-        has_matrix,
         has_irc,
         has_whatsapp,
         has_imessage,
