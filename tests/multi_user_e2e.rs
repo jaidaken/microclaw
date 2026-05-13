@@ -236,6 +236,48 @@ fn archive_excess_memories_scopes_to_user() {
     cleanup(&dir);
 }
 
+#[tokio::test]
+async fn memory_backend_routes_user_id_through_provider() {
+    use std::sync::Arc;
+
+    let (db, dir) = test_db();
+    let backend = microclaw::memory_backend::MemoryBackend::local_only(Arc::new(db));
+
+    let alice = "user-alice";
+    let bob = "user-bob";
+
+    backend
+        .insert_memory_with_metadata(alice, None, "alice secret", "KNOWLEDGE", "explicit", 0.9)
+        .await
+        .unwrap();
+    backend
+        .insert_memory_with_metadata(bob, None, "bob secret", "KNOWLEDGE", "explicit", 0.9)
+        .await
+        .unwrap();
+
+    let alice_mem = backend.get_memories_for_context(alice, 0, 100).await.unwrap();
+    let bob_mem = backend.get_memories_for_context(bob, 0, 100).await.unwrap();
+
+    assert!(
+        alice_mem.iter().any(|m| m.content == "alice secret"),
+        "alice should see her global memory"
+    );
+    assert!(
+        !alice_mem.iter().any(|m| m.content == "bob secret"),
+        "alice must not see bob's global memory through provider"
+    );
+    assert!(
+        bob_mem.iter().any(|m| m.content == "bob secret"),
+        "bob should see his global memory"
+    );
+    assert!(
+        !bob_mem.iter().any(|m| m.content == "alice secret"),
+        "bob must not see alice's global memory through provider"
+    );
+
+    cleanup(&dir);
+}
+
 #[test]
 fn cross_user_chat_owner_lookup_returns_correct_user() {
     let (db, dir) = test_db();

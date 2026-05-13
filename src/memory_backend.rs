@@ -319,7 +319,7 @@ impl MemoryBackend {
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
-        self.provider.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit).await
+        self.provider.get_memories_for_context(user_id, chat_id, limit).await
     }
 
     pub async fn search_memories_with_options(
@@ -364,7 +364,7 @@ impl MemoryBackend {
             );
         }
         self.provider
-            .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, content, category, source, confidence)
+            .insert_memory_with_metadata(user_id, chat_id, content, category, source, confidence)
             .await
     }
 
@@ -624,8 +624,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
+        let user_id_owned = user_id.to_string();
         call_blocking(self.db.clone(), move |db| {
-            db.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit)
+            db.get_memories_for_context(&user_id_owned, chat_id, limit)
         })
         .await
     }
@@ -661,8 +662,9 @@ impl MemoryProvider for SqliteMemoryProvider {
         let text = content.to_string();
         let cat = category.to_string();
         let src = source.to_string();
+        let user_id_owned = user_id.to_string();
         call_blocking(self.db.clone(), move |db| {
-            db.insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, &text, &cat, &src, confidence)
+            db.insert_memory_with_metadata(&user_id_owned, chat_id, &text, &cat, &src, confidence)
         })
         .await
     }
@@ -768,6 +770,7 @@ impl MemoryProvider for McpMemoryProvider {
         let op = "memory_query(context)";
         let payload = serde_json::json!({
             "op": "context",
+            "user_id": user_id,
             "chat_id": chat_id,
             "limit": limit,
         });
@@ -839,6 +842,7 @@ impl MemoryProvider for McpMemoryProvider {
         let op = "memory_upsert(insert)";
         let payload = serde_json::json!({
             "op": "insert",
+            "user_id": user_id,
             "chat_id": chat_id,
             "content": content,
             "category": category,
@@ -1019,8 +1023,8 @@ impl MemoryProvider for FallbackMemoryProvider {
     ) -> Result<Vec<Memory>, MicroClawError> {
         self.fallback_on_err(
             "memory_query(context)",
-            self.primary.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit),
-            self.fallback.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit),
+            self.primary.get_memories_for_context(user_id, chat_id, limit),
+            self.fallback.get_memories_for_context(user_id, chat_id, limit),
         )
         .await
     }
@@ -1074,9 +1078,9 @@ impl MemoryProvider for FallbackMemoryProvider {
         self.fallback_on_err(
             "memory_upsert(insert)",
             self.primary
-                .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, content, category, source, confidence),
+                .insert_memory_with_metadata(user_id, chat_id, content, category, source, confidence),
             self.fallback
-                .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, content, category, source, confidence),
+                .insert_memory_with_metadata(user_id, chat_id, content, category, source, confidence),
         )
         .await
     }
