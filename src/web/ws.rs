@@ -417,23 +417,17 @@ async fn handle_ws_socket(
             None => return,
         };
 
-    // Operator keys may claim any header user_id; member keys cannot until per-key user binding lands.
     let user_id = if identity.is_operator() {
         claimed_user_id.unwrap_or_else(microclaw_core::tenant::bootstrap_user_id)
     } else {
-        match claimed_user_id {
-            Some(_) => {
-                let _ = send_error_response(
-                    &sender,
-                    "connect",
-                    "FORBIDDEN",
-                    "member keys cannot claim X-Clawchat-User-Id on the WS upgrade",
-                )
-                .await;
-                return;
-            }
-            None => microclaw_core::tenant::bootstrap_user_id(),
-        }
+        let _ = send_error_response(
+            &sender,
+            "connect",
+            "FORBIDDEN",
+            "member-role API keys cannot use the WS bridge until per-key user binding lands",
+        )
+        .await;
+        return;
     };
 
     let tick_sender = sender.clone();
