@@ -141,14 +141,29 @@ async fn run_due_tasks(state: &Arc<AppState>) {
                 }
             });
 
-        // M1.5: scheduled task runs as the chat's owner, not bootstrap.
         let task_chat_id = task.chat_id;
-        let task_user_id =
-            call_blocking(state.db.clone(), move |db| db.get_chat_user_id(task_chat_id))
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(microclaw_core::tenant::bootstrap_user_id);
+        let lookup =
+            call_blocking(state.db.clone(), move |db| db.get_chat_user_id(task_chat_id)).await;
+        let task_user_id = match lookup {
+            Ok(Some(uid)) => uid,
+            Ok(None) => {
+                warn!(
+                    chat_id = task.chat_id,
+                    task_id = task.id,
+                    "Scheduler: chat owner missing for task; skipping run"
+                );
+                continue;
+            }
+            Err(e) => {
+                warn!(
+                    chat_id = task.chat_id,
+                    task_id = task.id,
+                    error = %e,
+                    "Scheduler: chat owner lookup failed; skipping task to avoid running as operator"
+                );
+                continue;
+            }
+        };
         let (success, result_summary) = match process_with_agent(
             state,
             AgentRequestContext {
