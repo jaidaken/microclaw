@@ -2206,6 +2206,7 @@ fn build_router(web_state: WebState) -> Router {
     use utoipa_axum::routes;
     use utoipa_scalar::{Scalar, Servable};
 
+    let docs_state = web_state.clone();
     let (router, api) = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
         .routes(routes!(openapi::api_health_root))
         .routes(routes!(index_or_ws))
@@ -2254,7 +2255,8 @@ fn build_router(web_state: WebState) -> Router {
         .with_state(web_state)
         .split_for_parts();
 
-    router
+    // /openapi.json + /docs gated AuthScope::Read; spec reveals route surface.
+    let docs_router: Router = Router::new()
         .route(
             "/openapi.json",
             get({
@@ -2263,6 +2265,23 @@ fn build_router(web_state: WebState) -> Router {
             }),
         )
         .merge(Scalar::with_url("/docs", api))
+        .layer(axum::middleware::from_fn_with_state(
+            docs_state.clone(),
+            require_docs_operator_session,
+        ))
+        .with_state(docs_state);
+
+    router.merge(docs_router)
+}
+
+async fn require_docs_operator_session(
+    State(state): State<WebState>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    require_scope(&state, &headers, AuthScope::Read).await?;
+    Ok(next.run(req).await)
 }
 
 #[cfg(test)]
