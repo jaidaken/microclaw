@@ -141,14 +141,21 @@ async fn run_due_tasks(state: &Arc<AppState>) {
                 }
             });
 
-        // Run agent loop with the task prompt
+        // M1.5: scheduled task runs as the chat's owner, not bootstrap.
+        let task_chat_id = task.chat_id;
+        let task_user_id =
+            call_blocking(state.db.clone(), move |db| db.get_chat_user_id(task_chat_id))
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(microclaw_core::tenant::bootstrap_user_id);
         let (success, result_summary) = match process_with_agent(
             state,
             AgentRequestContext {
                 caller_channel: &routing.channel_name,
                 chat_id: task.chat_id,
                 chat_type: routing.conversation.as_agent_chat_type(),
-                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
+                user_id: std::borrow::Cow::Owned(task_user_id),
             },
             Some(&task.prompt),
             None,

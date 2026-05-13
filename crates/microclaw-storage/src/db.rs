@@ -1786,6 +1786,20 @@ impl Database {
         }
     }
 
+    pub fn get_chat_user_id(&self, chat_id: i64) -> Result<Option<String>, MicroClawError> {
+        let conn = self.lock_conn();
+        let result = conn.query_row(
+            "SELECT user_id FROM chats WHERE chat_id = ?1",
+            params![chat_id],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn get_chat_channel(&self, chat_id: i64) -> Result<Option<String>, MicroClawError> {
         let conn = self.lock_conn();
         let result = conn.query_row(
