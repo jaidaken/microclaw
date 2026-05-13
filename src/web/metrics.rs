@@ -1,13 +1,67 @@
 use super::*;
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct SubagentObservabilityQuery {
     pub session_key: Option<String>,
     pub scope: Option<String>,
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, IntoParams)]
+#[allow(dead_code)]
+pub(super) struct MetricsHistoryQueryParams {
+    pub minutes: Option<i64>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct MetricsEnvelope {
+    pub ok: bool,
+    pub metrics: serde_json::Value,
+}
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct MetricsSummary {
+    pub ok: bool,
+    pub window: String,
+    pub slo: serde_json::Value,
+    pub metrics: serde_json::Value,
+    pub summary: serde_json::Value,
+}
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct MetricsHistoryResponse {
+    pub ok: bool,
+    pub minutes: i64,
+    pub points: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct SubagentObservabilityResponse {
+    pub ok: bool,
+    pub scope: String,
+    pub summary: serde_json::Value,
+    pub recent_runs: Vec<serde_json::Value>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/metrics",
+    operation_id = "metrics_snapshot",
+    tag = "metrics",
+    responses(
+        (status = 200, description = "Process-lifetime metrics snapshot", body = MetricsEnvelope),
+        (status = 401, description = "Authentication required"),
+        (status = 403, description = "Insufficient scope"),
+        (status = 500, description = "Internal error"),
+    ),
+)]
 pub(super) async fn api_metrics(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -40,6 +94,18 @@ pub(super) async fn api_metrics(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/metrics/summary",
+    operation_id = "metrics_summary",
+    tag = "metrics",
+    responses(
+        (status = 200, description = "SLO summary with target burn-rates and runtime metrics", body = MetricsSummary),
+        (status = 401, description = "Authentication required"),
+        (status = 403, description = "Insufficient scope"),
+        (status = 500, description = "Internal error"),
+    ),
+)]
 pub(super) async fn api_metrics_summary(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -141,6 +207,19 @@ pub(super) async fn api_metrics_summary(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/metrics/history",
+    operation_id = "metrics_history",
+    tag = "metrics",
+    params(MetricsHistoryQueryParams),
+    responses(
+        (status = 200, description = "Persisted metrics history time-series within a recent window", body = MetricsHistoryResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 403, description = "Insufficient scope"),
+        (status = 500, description = "Internal error"),
+    ),
+)]
 pub(super) async fn api_metrics_history(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -177,6 +256,20 @@ pub(super) async fn api_metrics_history(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/subagents/observability",
+    operation_id = "metrics_subagents_observability",
+    tag = "metrics",
+    params(SubagentObservabilityQuery),
+    responses(
+        (status = 200, description = "Subagent run observability snapshot (counts plus recent runs)", body = SubagentObservabilityResponse),
+        (status = 401, description = "Authentication required"),
+        (status = 403, description = "Insufficient scope"),
+        (status = 404, description = "Session not found"),
+        (status = 500, description = "Internal error"),
+    ),
+)]
 pub(super) async fn api_subagents_observability(
     headers: HeaderMap,
     State(state): State<WebState>,

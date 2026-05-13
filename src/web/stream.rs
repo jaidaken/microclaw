@@ -1,6 +1,19 @@
 use super::*;
 use futures_util::FutureExt;
 
+#[utoipa::path(
+    post,
+    path = "/api/send_stream",
+    operation_id = "stream_send",
+    tag = "stream",
+    request_body = SendRequest,
+    responses(
+        (status = 200, description = "Stream run accepted. Returns the run identifier; subscribe to /api/stream?run_id=... for the SSE event stream", body = StartStreamResponse),
+        (status = 400, description = "Validation error (empty message)", body = String),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 429, description = "Rate-limit or in-flight cap exceeded", body = String),
+    ),
+)]
 pub(super) async fn api_send_stream(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -348,6 +361,19 @@ async fn start_stream_run_internal(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/stream",
+    operation_id = "stream_subscribe",
+    tag = "stream",
+    params(StreamQuery),
+    responses(
+        (status = 200, description = "Server-Sent Events stream of agent events. Frame `event:` is one of: replay_meta, status, tool_start, tool_result, delta, mid_turn_injection, done, error, aborted. `id:` is a monotonically-increasing per-run event id usable as Last-Event-ID for resume.", content_type = "text/event-stream"),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 403, description = "Run is owned by another actor", body = String),
+        (status = 404, description = "Run not found or already expired", body = String),
+    ),
+)]
 pub(super) async fn api_stream(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -444,6 +470,19 @@ pub(super) async fn api_stream(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/run_status",
+    operation_id = "stream_run_status",
+    tag = "stream",
+    params(RunStatusQuery),
+    responses(
+        (status = 200, description = "Run-status snapshot (done flag + last event id) for resume / polling", body = RunStatusResponse),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 403, description = "Run is owned by another actor", body = String),
+        (status = 404, description = "Run not found or already expired", body = String),
+    ),
+)]
 pub(super) async fn api_run_status(
     headers: HeaderMap,
     State(state): State<WebState>,

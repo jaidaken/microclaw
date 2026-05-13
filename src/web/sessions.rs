@@ -1,6 +1,73 @@
 use super::*;
 use microclaw_tools::todo_store::clear_todos;
+use utoipa::ToSchema;
 
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct SessionItemView {
+    session_key: String,
+    label: String,
+    chat_id: i64,
+    chat_type: String,
+    last_message_time: String,
+    last_message_preview: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct SessionsListResponse {
+    ok: bool,
+    sessions: Vec<SessionItemView>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct HistoryItemView {
+    id: String,
+    sender_name: String,
+    content: String,
+    is_from_bot: bool,
+    timestamp: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct HistoryResponse {
+    ok: bool,
+    session_key: String,
+    chat_id: i64,
+    messages: Vec<HistoryItemView>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct SessionTreeNode {
+    chat_id: i64,
+    session_key: String,
+    parent_session_key: Option<String>,
+    fork_point: Option<i64>,
+    updated_at: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct SessionTreeResponse {
+    ok: bool,
+    nodes: Vec<SessionTreeNode>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/sessions",
+    operation_id = "sessions_list",
+    tag = "sessions",
+    responses(
+        (status = 200, description = "Recent chat sessions across channels", body = SessionsListResponse),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Read)"),
+        (status = 500, description = "Database read failure"),
+    ),
+)]
 pub(super) async fn api_sessions(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -19,6 +86,23 @@ pub(super) async fn api_sessions(
     Ok(Json(json!({ "ok": true, "sessions": sessions })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/history",
+    operation_id = "sessions_history",
+    tag = "sessions",
+    params(
+        ("session_key" = Option<String>, Query, description = "Session key; defaults to 'main'"),
+        ("limit" = Option<usize>, Query, description = "Limit messages returned (newest tail)"),
+    ),
+    responses(
+        (status = 200, description = "Stored messages for the requested session", body = HistoryResponse),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Read)"),
+        (status = 404, description = "Session not found"),
+        (status = 500, description = "Database read failure"),
+    ),
+)]
 pub(super) async fn api_history(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -61,6 +145,20 @@ pub(super) async fn api_history(
     })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/reset",
+    operation_id = "sessions_reset",
+    tag = "sessions",
+    request_body(content_type = "application/json", description = "Request body: { session_key?: string }"),
+    responses(
+        (status = 200, description = "Session reset, returns ok + deleted flag"),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Approvals)"),
+        (status = 404, description = "Session not found"),
+        (status = 500, description = "Database write failure"),
+    ),
+)]
 pub(super) async fn api_reset(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -129,6 +227,20 @@ pub(super) async fn api_reset(
     Ok(Json(json!({ "ok": true, "deleted": deleted })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/delete_session",
+    operation_id = "sessions_delete",
+    tag = "sessions",
+    request_body(content_type = "application/json", description = "Request body: { session_key?: string }"),
+    responses(
+        (status = 200, description = "Session deleted, returns ok + deleted flag"),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Approvals)"),
+        (status = 404, description = "Session not found"),
+        (status = 500, description = "Database write failure"),
+    ),
+)]
 pub(super) async fn api_delete_session(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -170,6 +282,21 @@ pub(super) async fn api_delete_session(
     Ok(Json(json!({ "ok": true, "deleted": deleted })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/sessions/fork",
+    operation_id = "sessions_fork",
+    tag = "sessions",
+    request_body(content_type = "application/json", description = "Request body: { source_session_key: string, target_session_key?: string, fork_point?: number }"),
+    responses(
+        (status = 200, description = "Forked session metadata"),
+        (status = 400, description = "Target session_key matches source"),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Approvals)"),
+        (status = 404, description = "Source session not found"),
+        (status = 500, description = "Database write failure"),
+    ),
+)]
 pub(super) async fn api_sessions_fork(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -281,6 +408,21 @@ pub(super) async fn api_sessions_fork(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/sessions/tree",
+    operation_id = "sessions_tree",
+    tag = "sessions",
+    params(
+        ("limit" = Option<usize>, Query, description = "Maximum nodes to return (1..=5000, default 1000)"),
+    ),
+    responses(
+        (status = 200, description = "Session fork tree nodes", body = SessionTreeResponse),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Read)"),
+        (status = 500, description = "Database read failure"),
+    ),
+)]
 pub(super) async fn api_sessions_tree(
     headers: HeaderMap,
     State(state): State<WebState>,

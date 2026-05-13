@@ -1,5 +1,7 @@
 use super::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use utoipa::ToSchema;
 
 const ALLOWED_API_KEY_SCOPES: &[&str] = &[
     "operator.read",
@@ -8,10 +10,101 @@ const ALLOWED_API_KEY_SCOPES: &[&str] = &[
     "operator.approvals",
 ];
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub(super) struct AuthSetPasswordRequest {
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(super) struct AuthLoginRequest {
+    pub password: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub remember_days: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(super) struct AuthCreateApiKeyRequest {
+    pub label: String,
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub expires_days: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(super) struct AuthRotateApiKeyRequest {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub expires_days: Option<i64>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct AuthStatus {
+    pub ok: bool,
+    pub authenticated: bool,
+    pub has_password: bool,
+    pub using_default_password: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct AuthAck {
+    pub ok: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct AuthLoginResponse {
+    pub ok: bool,
+    pub expires_at: String,
+    pub csrf_token: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct AuthApiKey {
+    pub id: i64,
+    pub label: String,
+    pub prefix: String,
+    pub created_at: String,
+    pub revoked_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub last_used_at: Option<String>,
+    pub rotated_from_key_id: Option<i64>,
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct AuthApiKeysList {
+    pub ok: bool,
+    pub keys: Vec<AuthApiKey>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct AuthCreatedApiKey {
+    pub ok: bool,
+    pub api_key: String,
+    pub prefix: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/auth/status",
+    operation_id = "auth_status",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current auth state for this client", body = AuthStatus),
+        (status = 500, description = "Internal error reading password state"),
+    ),
+)]
 pub(super) async fn api_auth_status(
     headers: HeaderMap,
     State(state): State<WebState>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<AuthStatus>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let hash = call_blocking(state.app_state.db.clone(), |db| db.get_auth_password_hash())
         .await
@@ -24,19 +117,32 @@ pub(super) async fn api_auth_status(
     let authenticated = require_scope(&state, &headers, AuthScope::Read)
         .await
         .is_ok();
-    Ok(Json(json!({
-        "ok": true,
-        "authenticated": authenticated,
-        "has_password": has_password,
-        "using_default_password": using_default_password
-    })))
+    Ok(Json(AuthStatus {
+        ok: true,
+        authenticated,
+        has_password,
+        using_default_password,
+    }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/password",
+    operation_id = "auth_set_password",
+    tag = "auth",
+    request_body = AuthSetPasswordRequest,
+    responses(
+        (status = 200, description = "Password updated", body = AuthAck),
+        (status = 400, description = "Password too short"),
+        (status = 401, description = "Missing or invalid bootstrap token / admin scope"),
+        (status = 500, description = "Internal error persisting password"),
+    ),
+)]
 pub(super) async fn api_auth_set_password(
     headers: HeaderMap,
     State(state): State<WebState>,
-    Json(body): Json<SetPasswordRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Json(body): Json<AuthSetPasswordRequest>,
+) -> Result<Json<AuthAck>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let has_password = call_blocking(state.app_state.db.clone(), |db| db.get_auth_password_hash())
         .await
@@ -88,13 +194,27 @@ pub(super) async fn api_auth_set_password(
         None,
     )
     .await;
-    Ok(Json(json!({"ok": true})))
+    Ok(Json(AuthAck { ok: true }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/login",
+    operation_id = "auth_login",
+    tag = "auth",
+    request_body = AuthLoginRequest,
+    responses(
+        (status = 200, description = "Login succeeded; session and csrf cookies issued", body = AuthLoginResponse),
+        (status = 400, description = "Password not configured"),
+        (status = 401, description = "Invalid credentials"),
+        (status = 429, description = "Too many login attempts"),
+        (status = 500, description = "Internal error reading credentials"),
+    ),
+)]
 pub(super) async fn api_auth_login(
     headers: HeaderMap,
     State(state): State<WebState>,
-    Json(body): Json<LoginRequest>,
+    Json(body): Json<AuthLoginRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let client_key = client_key_from_headers_with_config(&headers, &state.app_state.config);
@@ -172,15 +292,24 @@ pub(super) async fn api_auth_login(
     Ok((
         StatusCode::OK,
         axum::response::AppendHeaders([("set-cookie", cookie), ("set-cookie", csrf_cookie)]),
-        Json(json!({
-            "ok": true,
-            "expires_at": expires_at,
-            "csrf_token": csrf_token,
-            "session_id": session_id
-        })),
+        Json(AuthLoginResponse {
+            ok: true,
+            expires_at,
+            csrf_token,
+            session_id,
+        }),
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    operation_id = "auth_logout",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Session revoked and cookies cleared", body = AuthAck),
+    ),
+)]
 pub(super) async fn api_auth_logout(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -198,43 +327,67 @@ pub(super) async fn api_auth_logout(
             ("set-cookie", clear_session_cookie_header()),
             ("set-cookie", clear_csrf_cookie_header()),
         ]),
-        Json(json!({"ok": true})),
+        Json(AuthAck { ok: true }),
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/api_keys",
+    operation_id = "auth_list_api_keys",
+    tag = "auth",
+    responses(
+        (status = 200, description = "All API keys (active + revoked)", body = AuthApiKeysList),
+        (status = 401, description = "Missing or invalid admin credentials"),
+        (status = 403, description = "Caller lacks admin scope"),
+        (status = 500, description = "Internal error reading api keys"),
+    ),
+)]
 pub(super) async fn api_auth_api_keys(
     headers: HeaderMap,
     State(state): State<WebState>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<AuthApiKeysList>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     require_scope(&state, &headers, AuthScope::Admin).await?;
     let keys = call_blocking(state.app_state.db.clone(), |db| db.list_api_keys())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let keys_json = keys
+    let keys = keys
         .into_iter()
-        .map(|k| {
-            json!({
-                "id": k.id,
-                "label": k.label,
-                "prefix": k.prefix,
-                "created_at": k.created_at,
-                "revoked_at": k.revoked_at,
-                "expires_at": k.expires_at,
-                "last_used_at": k.last_used_at,
-                "rotated_from_key_id": k.rotated_from_key_id,
-                "scopes": k.scopes
-            })
+        .map(|k| AuthApiKey {
+            id: k.id,
+            label: k.label,
+            prefix: k.prefix,
+            created_at: k.created_at,
+            revoked_at: k.revoked_at,
+            expires_at: k.expires_at,
+            last_used_at: k.last_used_at,
+            rotated_from_key_id: k.rotated_from_key_id,
+            scopes: k.scopes,
         })
         .collect::<Vec<_>>();
-    Ok(Json(json!({"ok": true, "keys": keys_json})))
+    Ok(Json(AuthApiKeysList { ok: true, keys }))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/api_keys",
+    operation_id = "auth_create_api_key",
+    tag = "auth",
+    request_body = AuthCreateApiKeyRequest,
+    responses(
+        (status = 200, description = "New api key minted; raw secret returned exactly once", body = AuthCreatedApiKey),
+        (status = 400, description = "Label or scope validation failed"),
+        (status = 401, description = "Missing or invalid admin credentials"),
+        (status = 403, description = "Caller lacks admin scope"),
+        (status = 500, description = "Internal error persisting api key"),
+    ),
+)]
 pub(super) async fn api_auth_create_api_key(
     headers: HeaderMap,
     State(state): State<WebState>,
-    Json(body): Json<CreateApiKeyRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    Json(body): Json<AuthCreateApiKeyRequest>,
+) -> Result<Json<AuthCreatedApiKey>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let identity = require_scope(&state, &headers, AuthScope::Admin).await?;
     let label = body.label.trim().to_string();
@@ -281,11 +434,28 @@ pub(super) async fn api_auth_create_api_key(
         None,
     )
     .await;
-    Ok(Json(
-        json!({"ok": true, "api_key": raw_key, "prefix": prefix, "scopes": scopes, "expires_at": expires_at}),
-    ))
+    Ok(Json(AuthCreatedApiKey {
+        ok: true,
+        api_key: raw_key,
+        prefix,
+        scopes,
+        expires_at,
+    }))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/auth/api_keys/{id}",
+    operation_id = "auth_revoke_api_key",
+    tag = "auth",
+    params(("id" = i64, Path, description = "API key id")),
+    responses(
+        (status = 200, description = "Revocation result (revoked flag may be false on a no-op)"),
+        (status = 401, description = "Missing or invalid admin credentials"),
+        (status = 403, description = "Caller lacks admin scope"),
+        (status = 500, description = "Internal error revoking api key"),
+    ),
+)]
 pub(super) async fn api_auth_revoke_api_key(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -311,11 +481,27 @@ pub(super) async fn api_auth_revoke_api_key(
     Ok(Json(json!({"ok": true, "revoked": revoked})))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/api_keys/{id}/rotate",
+    operation_id = "auth_rotate_api_key",
+    tag = "auth",
+    params(("id" = i64, Path, description = "API key id to rotate")),
+    request_body = AuthRotateApiKeyRequest,
+    responses(
+        (status = 200, description = "New api key minted; old one revoked"),
+        (status = 400, description = "Scope validation failed"),
+        (status = 401, description = "Missing or invalid admin credentials"),
+        (status = 403, description = "Caller lacks admin scope"),
+        (status = 404, description = "Source api key not found"),
+        (status = 500, description = "Internal error rotating api key"),
+    ),
+)]
 pub(super) async fn api_auth_rotate_api_key(
     headers: HeaderMap,
     State(state): State<WebState>,
     Path(key_id): Path<i64>,
-    Json(body): Json<RotateApiKeyRequest>,
+    Json(body): Json<AuthRotateApiKeyRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let identity = require_scope(&state, &headers, AuthScope::Admin).await?;

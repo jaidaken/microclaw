@@ -35,6 +35,7 @@ mod chat_abort;
 mod config;
 mod metrics;
 mod middleware;
+mod openapi;
 mod sessions;
 mod skills;
 mod stream;
@@ -757,14 +758,14 @@ struct HistoryQuery {
     limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct SendRequest {
     session_key: Option<String>,
     sender_name: Option<String>,
     message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct HookAgentRequest {
     #[serde(default, alias = "session_key")]
@@ -776,7 +777,7 @@ struct HookAgentRequest {
     message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct HookWakeRequest {
     #[serde(default, alias = "session_key")]
@@ -788,28 +789,28 @@ struct HookWakeRequest {
     mode: Option<String>, // now | next-heartbeat
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct StreamQuery {
     run_id: String,
     last_event_id: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct ResetRequest {
     session_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct RunStatusQuery {
     run_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct UsageQuery {
     session_key: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct MemoryObservabilityQuery {
     session_key: Option<String>,
     scope: Option<String>, // chat | global
@@ -880,33 +881,7 @@ struct UpdateConfigRequest {
     web_session_idle_ttl_seconds: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
-struct LoginRequest {
-    password: String,
-    label: Option<String>,
-    remember_days: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SetPasswordRequest {
-    password: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateApiKeyRequest {
-    label: String,
-    scopes: Vec<String>,
-    expires_days: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RotateApiKeyRequest {
-    label: Option<String>,
-    scopes: Option<Vec<String>>,
-    expires_days: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct ForkSessionRequest {
     source_session_key: String,
     target_session_key: Option<String>,
@@ -924,7 +899,7 @@ struct SessionTreeQuery {
     limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
 struct AuditQuery {
     kind: Option<String>,
     limit: Option<usize>,
@@ -935,6 +910,137 @@ struct ConfigWarning {
     code: &'static str,
     severity: &'static str,
     message: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct SendResponse {
+    ok: bool,
+    session_key: String,
+    chat_id: i64,
+    response: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct StartStreamResponse {
+    ok: bool,
+    run_id: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct RunStatusResponse {
+    ok: bool,
+    run_id: String,
+    done: bool,
+    last_event_id: u64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct AuditLogEntry {
+    id: i64,
+    kind: String,
+    actor: Option<String>,
+    action: String,
+    target: Option<String>,
+    status: Option<String>,
+    detail: Option<String>,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct AuditResponse {
+    ok: bool,
+    logs: Vec<AuditLogEntry>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct MemoryObservabilitySummary {
+    total: i64,
+    active: i64,
+    archived: i64,
+    low_confidence: i64,
+    avg_confidence: f64,
+    reflector_runs_24h: i64,
+    reflector_inserted_24h: i64,
+    reflector_updated_24h: i64,
+    reflector_skipped_24h: i64,
+    injection_events_24h: i64,
+    injection_selected_24h: i64,
+    injection_candidates_24h: i64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct UsageResponse {
+    ok: bool,
+    session_key: String,
+    chat_id: i64,
+    report: String,
+    memory_observability: MemoryObservabilitySummary,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct ObservabilityPagination {
+    limit: usize,
+    offset: usize,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct ReflectorRunRow {
+    id: i64,
+    chat_id: Option<i64>,
+    started_at: String,
+    finished_at: Option<String>,
+    extracted_count: i64,
+    inserted_count: i64,
+    updated_count: i64,
+    skipped_count: i64,
+    dedup_method: Option<String>,
+    parse_ok: bool,
+    error_text: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct InjectionLogRow {
+    id: i64,
+    chat_id: Option<i64>,
+    created_at: String,
+    retrieval_method: Option<String>,
+    candidate_count: i64,
+    selected_count: i64,
+    omitted_count: i64,
+    tokens_est: i64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct MemoryObservabilityResponse {
+    ok: bool,
+    scope: String,
+    window_hours: u64,
+    pagination: ObservabilityPagination,
+    summary: MemoryObservabilitySummary,
+    reflector_runs: Vec<ReflectorRunRow>,
+    injection_logs: Vec<InjectionLogRow>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct HookAck {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queued: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_id: Option<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct HealthResponse {
+    ok: bool,
+    version: String,
+    web_enabled: bool,
 }
 
 /// Convert a serde_json::Value to a serde_yaml::Value for channel config merging.
@@ -1092,6 +1198,16 @@ async fn index() -> impl IntoResponse {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/",
+    operation_id = "system_index_or_ws",
+    tag = "system",
+    responses(
+        (status = 200, description = "HTML index page or WebSocket upgrade response"),
+        (status = 101, description = "Switching Protocols: WebSocket upgrade"),
+    ),
+)]
 async fn index_or_ws(
     ws_upgrade: Result<
         axum::extract::ws::WebSocketUpgrade,
@@ -1108,6 +1224,15 @@ async fn index_or_ws(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    operation_id = "system_health",
+    tag = "system",
+    responses(
+        (status = 200, description = "Microclaw health snapshot. Minimal shape when unauthenticated; extended scheduler / reflector / memory backend fields when authenticated.", body = HealthResponse),
+    ),
+)]
 async fn api_health(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -1188,14 +1313,9 @@ async fn api_health(
     })))
 }
 
-async fn api_health_root(State(state): State<WebState>) -> Json<serde_json::Value> {
-    metrics_http_inc(&state).await;
-    Json(json!({
-        "ok": true,
-        "version": env!("CARGO_PKG_VERSION"),
-        "web_enabled": state.app_state.config.web_enabled,
-    }))
-}
+// api_health_root moved to `web::openapi` so it can carry a
+// `#[utoipa::path]` annotation. The OpenApiRouter in `build_router`
+// registers it via `routes!(openapi::api_health_root)`.
 
 fn map_chat_to_session(registry: &ChannelRegistry, chat: ChatSummary) -> SessionItem {
     let source = session_source_for_chat(registry, &chat.chat_type, chat.chat_title.as_deref());
@@ -1438,6 +1558,18 @@ async fn resolve_chat_id_for_session_key(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/usage",
+    operation_id = "system_usage",
+    tag = "system",
+    params(UsageQuery),
+    responses(
+        (status = 200, description = "Per-session usage report plus memory observability summary", body = UsageResponse),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 404, description = "Session not found", body = String),
+    ),
+)]
 async fn api_usage(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -1479,6 +1611,18 @@ async fn api_usage(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/memory_observability",
+    operation_id = "memory_observability",
+    tag = "memory",
+    params(MemoryObservabilityQuery),
+    responses(
+        (status = 200, description = "Memory observability summary, reflector runs, and injection logs", body = MemoryObservabilityResponse),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 404, description = "Session not found (chat scope only)", body = String),
+    ),
+)]
 async fn api_memory_observability(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -1575,6 +1719,19 @@ async fn api_memory_observability(
     })))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/send",
+    operation_id = "chat_send",
+    tag = "chat",
+    request_body = SendRequest,
+    responses(
+        (status = 200, description = "Non-streaming chat send: stores the user message, runs the agent, returns the final response", body = SendResponse),
+        (status = 400, description = "Validation error (empty message, read-only chat)", body = String),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 429, description = "Rate-limit or in-flight cap exceeded", body = String),
+    ),
+)]
 async fn api_send(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -1620,6 +1777,19 @@ async fn api_send(
     result
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/hooks/agent",
+    operation_id = "system_hook_agent",
+    tag = "system",
+    request_body = HookAgentRequest,
+    responses(
+        (status = 200, description = "Webhook accepted; returns the run identifier of the spawned stream run", body = StartStreamResponse),
+        (status = 400, description = "Validation error", body = String),
+        (status = 401, description = "Hook token missing or invalid", body = String),
+        (status = 503, description = "Hook token is not configured", body = String),
+    ),
+)]
 async fn api_hook_agent(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -1640,6 +1810,19 @@ async fn api_hook_agent(
     stream::start_stream_run_with_actor(state, send, "hook:token".to_string(), "/hooks/agent").await
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/hooks/wake",
+    operation_id = "system_hook_wake",
+    tag = "system",
+    request_body = HookWakeRequest,
+    responses(
+        (status = 200, description = "Wake event accepted. Either spawns an immediate stream run (mode=now) or enqueues the message for the next heartbeat", body = HookAck),
+        (status = 400, description = "Validation error (empty text, unknown mode)", body = String),
+        (status = 401, description = "Hook token missing or invalid", body = String),
+        (status = 503, description = "Hook token is not configured", body = String),
+    ),
+)]
 async fn api_hook_wake(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -1857,6 +2040,18 @@ async fn send_and_store_response_with_events(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/audit",
+    operation_id = "system_audit_logs",
+    tag = "system",
+    params(AuditQuery),
+    responses(
+        (status = 200, description = "Audit log feed (admin only)", body = AuditResponse),
+        (status = 401, description = "Authentication required", body = String),
+        (status = 403, description = "Admin scope required", body = String),
+    ),
+)]
 async fn api_audit_logs(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -2006,67 +2201,68 @@ async fn favicon_file() -> impl IntoResponse {
 }
 
 fn build_router(web_state: WebState) -> Router {
-    Router::new()
-        .route("/", get(index_or_ws))
-        .route("/health", get(api_health_root))
+    use utoipa::OpenApi;
+    use utoipa_axum::router::OpenApiRouter;
+    use utoipa_axum::routes;
+    use utoipa_scalar::{Scalar, Servable};
+
+    let (router, api) = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
+        .routes(routes!(openapi::api_health_root))
+        .routes(routes!(index_or_ws))
         .route("/assets/{*file}", get(asset_file))
         .route("/icon.png", get(icon_file))
         .route("/favicon.ico", get(favicon_file))
-        .route("/api/health", get(api_health))
+        .routes(routes!(api_health))
         .route("/.well-known/agent.json", get(a2a::api_a2a_agent_card))
-        .route("/api/auth/status", get(auth::api_auth_status))
-        .route("/api/auth/password", post(auth::api_auth_set_password))
-        .route("/api/auth/login", post(auth::api_auth_login))
-        .route("/api/auth/logout", post(auth::api_auth_logout))
-        .route(
-            "/api/auth/api_keys",
-            get(auth::api_auth_api_keys).post(auth::api_auth_create_api_key),
-        )
-        .route(
-            "/api/auth/api_keys/{id}",
-            axum::routing::delete(auth::api_auth_revoke_api_key),
-        )
-        .route(
-            "/api/auth/api_keys/{id}/rotate",
-            post(auth::api_auth_rotate_api_key),
-        )
-        .route(
-            "/api/config",
-            get(config::api_get_config).put(config::api_update_config),
-        )
-        .route("/api/config/self_check", get(config::api_config_self_check))
-        .route("/api/sessions", get(sessions::api_sessions))
-        .route("/api/sessions/tree", get(sessions::api_sessions_tree))
-        .route("/api/sessions/fork", post(sessions::api_sessions_fork))
-        .route("/api/audit", get(api_audit_logs))
-        .route("/api/history", get(sessions::api_history))
-        .route("/api/usage", get(api_usage))
-        .route("/api/memory_observability", get(api_memory_observability))
-        .route("/api/metrics", get(metrics::api_metrics))
-        .route("/api/metrics/summary", get(metrics::api_metrics_summary))
-        .route("/api/metrics/history", get(metrics::api_metrics_history))
-        .route(
-            "/api/subagents/observability",
-            get(metrics::api_subagents_observability),
-        )
-        .route("/api/send", post(api_send))
+        .routes(routes!(auth::api_auth_status))
+        .routes(routes!(auth::api_auth_set_password))
+        .routes(routes!(auth::api_auth_login))
+        .routes(routes!(auth::api_auth_logout))
+        .routes(routes!(auth::api_auth_api_keys, auth::api_auth_create_api_key))
+        .routes(routes!(auth::api_auth_revoke_api_key))
+        .routes(routes!(auth::api_auth_rotate_api_key))
+        .routes(routes!(config::api_get_config, config::api_update_config))
+        .routes(routes!(config::api_config_self_check))
+        .routes(routes!(sessions::api_sessions))
+        .routes(routes!(sessions::api_sessions_tree))
+        .routes(routes!(sessions::api_sessions_fork))
+        .routes(routes!(api_audit_logs))
+        .routes(routes!(sessions::api_history))
+        .routes(routes!(api_usage))
+        .routes(routes!(api_memory_observability))
+        .routes(routes!(metrics::api_metrics))
+        .routes(routes!(metrics::api_metrics_summary))
+        .routes(routes!(metrics::api_metrics_history))
+        .routes(routes!(metrics::api_subagents_observability))
+        .routes(routes!(api_send))
         .route("/api/chat", post(api_send))
-        .route("/api/a2a/agent-card", get(a2a::api_a2a_agent_card))
-        .route("/api/a2a/message", post(a2a::api_a2a_message))
-        .route("/api/hooks/agent", post(api_hook_agent))
-        .route("/api/hooks/wake", post(api_hook_wake))
-        .route("/api/send_stream", post(stream::api_send_stream))
+        .routes(routes!(a2a::api_a2a_agent_card))
+        .routes(routes!(a2a::api_a2a_message))
+        .routes(routes!(api_hook_agent))
+        .routes(routes!(api_hook_wake))
+        .routes(routes!(stream::api_send_stream))
         .route("/api/chat_stream", post(stream::api_send_stream))
         .route("/hooks/agent", post(api_hook_agent))
         .route("/hooks/wake", post(api_hook_wake))
-        .route("/api/stream", get(stream::api_stream))
-        .route("/api/run_status", get(stream::api_run_status))
-        .route("/api/reset", post(sessions::api_reset))
-        .route("/api/delete_session", post(sessions::api_delete_session))
-        .route("/api/skills", get(skills::api_list_skills))
-        .route("/api/skills/{name}/enable", post(skills::api_enable_skill))
-        .route("/api/skills/{name}/disable", post(skills::api_disable_skill))
+        .routes(routes!(stream::api_stream))
+        .routes(routes!(stream::api_run_status))
+        .routes(routes!(sessions::api_reset))
+        .routes(routes!(sessions::api_delete_session))
+        .routes(routes!(skills::api_list_skills))
+        .routes(routes!(skills::api_enable_skill))
+        .routes(routes!(skills::api_disable_skill))
         .with_state(web_state)
+        .split_for_parts();
+
+    router
+        .route(
+            "/openapi.json",
+            get({
+                let api = api.clone();
+                move || async move { axum::Json(api) }
+            }),
+        )
+        .merge(Scalar::with_url("/docs", api))
 }
 
 #[cfg(test)]
@@ -2104,6 +2300,53 @@ mod tests {
             assets_dir.unwrap().files().next().is_some(),
             "embedded web asset dir is empty: assets"
         );
+    }
+
+    #[tokio::test]
+    async fn test_openapi_json_route_serves_3_1_spec_with_all_operations() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        let app = build_router(web_state);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/openapi.json")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let spec: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(spec["openapi"].as_str().unwrap(), "3.1.0");
+        assert_eq!(spec["info"]["title"].as_str().unwrap(), "microclaw");
+        let paths = spec["paths"].as_object().expect("paths object");
+        // 38 annotated handlers landed via routes!(). Expect a non-trivial path count.
+        assert!(
+            paths.len() >= 30,
+            "expected >= 30 operations in /openapi.json, got {}",
+            paths.len()
+        );
+        // Spot-check a few key paths.
+        for required in [
+            "/health",
+            "/",
+            "/api/health",
+            "/api/auth/login",
+            "/api/auth/logout",
+            "/api/sessions",
+            "/api/send",
+            "/api/send_stream",
+            "/api/stream",
+            "/api/skills",
+            "/api/metrics",
+            "/api/a2a/agent-card",
+        ] {
+            assert!(
+                paths.contains_key(required),
+                "openapi spec missing path {required}",
+            );
+        }
     }
 
     struct DummyLlm;

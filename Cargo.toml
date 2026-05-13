@@ -93,6 +93,9 @@ rmcp = { version = "1.6", features = [
 shellexpand = "3.1.2"
 qrcode = "0.14"
 yaml-edit = "0.2.0"
+utoipa = { version = "5.5", features = ["chrono", "uuid", "axum_extras"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 
 [dev-dependencies]
 tower = "0.5"

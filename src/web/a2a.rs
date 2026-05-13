@@ -3,6 +3,46 @@ use crate::a2a::{
     build_agent_card, default_session_key_for_source, local_agent_name, A2AMessageRequest,
     A2AMessageResponse, A2A_PROTOCOL_VERSION,
 };
+use utoipa::ToSchema;
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct A2AAgentCardSchema {
+    pub protocol_version: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub description: Option<String>,
+    pub public_base_url: Option<String>,
+    pub endpoints: A2AEndpointsSchema,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct A2AEndpointsSchema {
+    pub agent_card: String,
+    pub message: String,
+}
+
+#[derive(Debug, serde::Deserialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct A2AMessageRequestSchema {
+    pub session_key: Option<String>,
+    pub sender_name: Option<String>,
+    pub source_agent: Option<String>,
+    pub source_url: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, serde::Serialize, ToSchema)]
+#[allow(dead_code)]
+pub(super) struct A2AMessageResponseSchema {
+    pub ok: bool,
+    pub protocol_version: String,
+    pub agent_name: String,
+    pub session_key: String,
+    pub response: String,
+}
 
 fn a2a_token_allowed(config: &Config, headers: &HeaderMap) -> bool {
     let Some(raw) = headers.get("authorization").and_then(|v| v.to_str().ok()) else {
@@ -26,6 +66,16 @@ fn a2a_token_allowed(config: &Config, headers: &HeaderMap) -> bool {
         .any(|candidate| candidate == token)
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/a2a/agent-card",
+    operation_id = "a2a_agent_card",
+    tag = "a2a",
+    responses(
+        (status = 200, description = "Agent card describing this microclaw instance for A2A peers", body = A2AAgentCardSchema),
+        (status = 404, description = "A2A is disabled"),
+    ),
+)]
 pub(super) async fn api_a2a_agent_card(
     State(state): State<WebState>,
 ) -> Result<Json<crate::a2a::A2AAgentCard>, (StatusCode, String)> {
@@ -36,6 +86,20 @@ pub(super) async fn api_a2a_agent_card(
     Ok(Json(build_agent_card(&state.app_state.config)))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/a2a/message",
+    operation_id = "a2a_message_send",
+    tag = "a2a",
+    request_body = A2AMessageRequestSchema,
+    responses(
+        (status = 200, description = "Agent reply to the inbound A2A message", body = A2AMessageResponseSchema),
+        (status = 400, description = "message body missing or empty"),
+        (status = 401, description = "Invalid bearer token"),
+        (status = 403, description = "A2A inbound auth not configured"),
+        (status = 404, description = "A2A is disabled"),
+    ),
+)]
 pub(super) async fn api_a2a_message(
     headers: HeaderMap,
     State(state): State<WebState>,

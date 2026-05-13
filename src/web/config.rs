@@ -1,6 +1,47 @@
 use super::*;
 use microclaw_tools::runtime::{tool_execution_policy, tool_risk};
 use microclaw_tools::sandbox::{runtime_available_for_backend, selected_runtime_cli};
+use utoipa::ToSchema;
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct GetConfigResponse {
+    ok: bool,
+    path: String,
+    config: serde_json::Value,
+    soul_files: Vec<String>,
+    requires_restart: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct ConfigWarningView {
+    code: String,
+    severity: String,
+    message: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct SecurityPostureView {
+    sandbox_mode: String,
+    sandbox_runtime_available: bool,
+    sandbox_runtime_cli: Option<String>,
+    sandbox_backend: String,
+    sandbox_require_runtime: bool,
+    execution_policies: Vec<serde_json::Value>,
+    mount_allowlist: Option<serde_json::Value>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, ToSchema)]
+pub(super) struct ConfigSelfCheckResponse {
+    ok: bool,
+    security_posture: SecurityPostureView,
+    risk_level: String,
+    warning_count: usize,
+    warnings: Vec<ConfigWarningView>,
+}
 
 fn effective_data_root_dir(config: &crate::config::Config) -> std::path::PathBuf {
     let data_dir = std::path::PathBuf::from(&config.data_dir);
@@ -146,6 +187,18 @@ fn merge_yaml_value(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config",
+    operation_id = "system_config_get",
+    tag = "system",
+    responses(
+        (status = 200, description = "Current runtime config (secrets redacted) with on-disk path and discovered soul files", body = GetConfigResponse),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Read)"),
+        (status = 500, description = "Config save path could not be resolved"),
+    ),
+)]
 pub(super) async fn api_get_config(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -165,6 +218,18 @@ pub(super) async fn api_get_config(
     })))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/config/self_check",
+    operation_id = "system_config_self_check",
+    tag = "system",
+    responses(
+        (status = 200, description = "Security posture snapshot, risk level summary, and structured config warnings", body = ConfigSelfCheckResponse),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Read)"),
+        (status = 500, description = "Database or backend probe failure"),
+    ),
+)]
 pub(super) async fn api_config_self_check(
     headers: HeaderMap,
     State(state): State<WebState>,
@@ -686,6 +751,20 @@ fn default_mount_allowlist_path() -> Option<std::path::PathBuf> {
     Some(home.join(".microclaw/sandbox-mount-allowlist.txt"))
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/config",
+    operation_id = "system_config_update",
+    tag = "system",
+    request_body(content_type = "application/json", description = "Partial UpdateConfigRequest payload. All fields optional. Secrets sent as '***' are preserved."),
+    responses(
+        (status = 200, description = "Config persisted to disk; restart required to apply"),
+        (status = 400, description = "Validation error during post_deserialize"),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Insufficient scope (requires Admin)"),
+        (status = 500, description = "Config save or path resolution failure"),
+    ),
+)]
 pub(super) async fn api_update_config(
     headers: HeaderMap,
     State(state): State<WebState>,
