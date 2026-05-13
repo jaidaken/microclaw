@@ -169,9 +169,10 @@ pub(super) async fn api_reset(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let identity = require_scope(&state, &headers, AuthScope::Approvals).await?;
+    let user_id = extract_user_id(&headers)?;
 
     let session_key = normalize_session_key(body.session_key.as_deref());
-    let chat_id = resolve_chat_id_for_session_key(&state, &session_key).await?;
+    let chat_id = resolve_chat_id_for_session_key(&state, &session_key, &user_id).await?;
 
     let is_web = get_chat_routing(
         &state.app_state.channel_registry,
@@ -191,8 +192,9 @@ pub(super) async fn api_reset(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         let session_key_for_chat = session_key.clone();
+        let user_id_for_chat = user_id.clone();
         call_blocking(state.app_state.db.clone(), move |db| {
-            db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), chat_id, Some(&session_key_for_chat), "web")
+            db.upsert_chat(&user_id_for_chat, chat_id, Some(&session_key_for_chat), "web")
         })
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -252,9 +254,10 @@ pub(super) async fn api_delete_session(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let identity = require_scope(&state, &headers, AuthScope::Approvals).await?;
+    let user_id = extract_user_id(&headers)?;
 
     let session_key = normalize_session_key(body.session_key.as_deref());
-    let chat_id = resolve_chat_id_for_session_key(&state, &session_key).await?;
+    let chat_id = resolve_chat_id_for_session_key(&state, &session_key, &user_id).await?;
     let todo_channel = call_blocking(state.app_state.db.clone(), move |db| {
         db.get_chat_channel(chat_id)
     })
@@ -309,6 +312,7 @@ pub(super) async fn api_sessions_fork(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let identity = require_scope(&state, &headers, AuthScope::Approvals).await?;
+    let user_id = extract_user_id(&headers)?;
 
     let source_session_key = normalize_session_key(Some(&body.source_session_key));
     let target_session_key = body
@@ -325,7 +329,7 @@ pub(super) async fn api_sessions_fork(
         ));
     }
 
-    let source_chat_id = resolve_chat_id_for_session_key(&state, &source_session_key).await?;
+    let source_chat_id = resolve_chat_id_for_session_key(&state, &source_session_key, &user_id).await?;
     let source_messages = call_blocking(state.app_state.db.clone(), move |db| {
         db.get_all_messages(source_chat_id)
     })
@@ -338,9 +342,10 @@ pub(super) async fn api_sessions_fork(
         .min(source_messages.len());
     let fork_messages = source_messages[..fork_point].to_vec();
     let target_session_key_for_create = target_session_key.clone();
+    let user_id_for_create = user_id.clone();
     let target_chat_id = call_blocking(state.app_state.db.clone(), move |db| {
         db.resolve_or_create_chat_id(
-            &microclaw_core::tenant::bootstrap_user_id(),
+            &user_id_for_create,
             "web",
             &target_session_key_for_create,
             Some(&target_session_key_for_create),
@@ -359,8 +364,9 @@ pub(super) async fn api_sessions_fork(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let target_session_key_for_upsert = target_session_key.clone();
+    let user_id_for_upsert = user_id.clone();
     call_blocking(state.app_state.db.clone(), move |db| {
-        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), target_chat_id, Some(&target_session_key_for_upsert), "web")
+        db.upsert_chat(&user_id_for_upsert, target_chat_id, Some(&target_session_key_for_upsert), "web")
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

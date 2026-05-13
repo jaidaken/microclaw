@@ -370,10 +370,13 @@ pub(super) async fn api_ws(
 ) -> impl IntoResponse {
     metrics_http_inc(&state).await;
     let client_key = client_key_from_headers_with_config(&headers, &state.app_state.config);
-    ws.on_upgrade(move |socket| handle_ws_socket(state, socket, client_key))
+    // M1.5: optional on upgrade; fall back to bootstrap so existing clients keep working.
+    let user_id = super::extract_user_id(&headers)
+        .unwrap_or_else(|_| microclaw_core::tenant::bootstrap_user_id());
+    ws.on_upgrade(move |socket| handle_ws_socket(state, socket, client_key, user_id))
 }
 
-async fn handle_ws_socket(state: WebState, socket: WebSocket, client_key: String) {
+async fn handle_ws_socket(state: WebState, socket: WebSocket, client_key: String, user_id: String) {
     let conn_id = uuid::Uuid::new_v4().to_string();
     let (sender, mut receiver) = socket.split();
     let sender = std::sync::Arc::new(TokioMutex::new(sender));
@@ -438,6 +441,7 @@ async fn handle_ws_socket(state: WebState, socket: WebSocket, client_key: String
                     &conn_id,
                     &client_key,
                     &text,
+                    &user_id,
                 )
                 .await
                 .is_err()
@@ -606,6 +610,7 @@ async fn handle_request_frame(
     _conn_id: &str,
     client_key: &str,
     text: &str,
+    user_id: &str,
 ) -> Result<(), ()> {
     let frame = serde_json::from_str::<ClientFrame>(text).map_err(|err| {
         warn!(target: "web", client_key = client_key, "invalid websocket frame: {err}");
@@ -863,7 +868,7 @@ async fn handle_request_frame(
                 state.clone(),
                 send_body,
                 identity.actor.clone(),
-                "/", microclaw_core::tenant::bootstrap_user_id()).await
+                "/", user_id.to_string()).await
             {
                 Ok(resp) => resp,
                 Err((_, msg)) => {
@@ -1084,7 +1089,7 @@ async fn handle_request_frame(
                 state.clone(),
                 send_body,
                 identity.actor.clone(),
-                "/", microclaw_core::tenant::bootstrap_user_id()).await
+                "/", user_id.to_string()).await
             {
                 Ok(resp) => resp,
                 Err((_, msg)) => {
@@ -1196,7 +1201,7 @@ async fn handle_request_frame(
                 return Ok(());
             }
             let session_key = format!("spawn:{}", uuid::Uuid::new_v4().simple());
-            let spawn_chat_id = match resolve_chat_id_for_session_key(state, &session_key).await {
+            let spawn_chat_id = match resolve_chat_id_for_session_key(state, &session_key, user_id).await {
                 Ok(chat_id) => chat_id,
                 Err((_, msg)) => {
                     let _ = send_error_response(sender, &id, "UNAVAILABLE", &msg).await;
@@ -1226,7 +1231,7 @@ async fn handle_request_frame(
                 state.clone(),
                 send_body,
                 identity.actor.clone(),
-                "/", microclaw_core::tenant::bootstrap_user_id()).await
+                "/", user_id.to_string()).await
             {
                 Ok(resp) => resp,
                 Err((_, msg)) => {
@@ -1285,7 +1290,7 @@ async fn handle_request_frame(
                 }
             };
             let session_key = normalize_session_key(Some(&params.session_key));
-            let chat_id = match resolve_chat_id_for_session_key(state, &session_key).await {
+            let chat_id = match resolve_chat_id_for_session_key(state, &session_key, user_id).await {
                 Ok(chat_id) => chat_id,
                 Err((_, msg)) => {
                     let _ = send_error_response(sender, &id, "UNAVAILABLE", &msg).await;

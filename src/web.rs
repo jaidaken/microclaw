@@ -1520,10 +1520,11 @@ async fn enqueue_hook_message(
     session_key: &str,
     sender_name: &str,
     message: &str,
+    user_id: &str,
 ) -> Result<i64, (StatusCode, String)> {
     let parsed_chat_id = parse_chat_id_from_session_key(session_key);
     ensure_web_writable_chat(state, parsed_chat_id).await?;
-    let chat_id = resolve_chat_id_for_session_key(state, session_key).await?;
+    let chat_id = resolve_chat_id_for_session_key(state, session_key, user_id).await?;
     let user_msg = StoredMessage {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id,
@@ -1574,6 +1575,7 @@ async fn resolve_chat_id_for_session_key_read(
 async fn resolve_chat_id_for_session_key(
     state: &WebState,
     session_key: &str,
+    user_id: &str,
 ) -> Result<i64, (StatusCode, String)> {
     if let Some(parsed) = parse_chat_id_from_session_key(session_key) {
         return Ok(parsed);
@@ -1590,8 +1592,9 @@ async fn resolve_chat_id_for_session_key(
     }
 
     let key = session_key.to_string();
+    let user_owned = user_id.to_string();
     call_blocking(state.app_state.db.clone(), move |db| {
-        db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", &key, Some(&key), "web")
+        db.resolve_or_create_chat_id(&user_owned, "web", &key, Some(&key), "web")
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
@@ -1896,7 +1899,10 @@ async fn api_hook_wake(
         .trim()
         .to_ascii_lowercase();
     if mode == "next-heartbeat" {
-        let chat_id = enqueue_hook_message(&state, &session_key, &sender_name, &message).await?;
+        let hook_user_id = microclaw_core::tenant::bootstrap_user_id();
+        let chat_id =
+            enqueue_hook_message(&state, &session_key, &sender_name, &message, &hook_user_id)
+                .await?;
         return Ok(Json(json!({
             "ok": true,
             "mode": "next-heartbeat",
@@ -5509,8 +5515,6 @@ commands:
         server.abort();
     }
 
-    // FIXME(M1.5 phase 2 commit 3): WS bridge writes use bootstrap_user_id but /api/send takes X-Clawchat-User-Id; re-enable when WS reads user_id from upgrade headers.
-    #[ignore]
     #[tokio::test]
     async fn test_ws_session_settings_persist_and_enable_thinking_output() {
         let mut cfg = test_config_template();
@@ -5544,7 +5548,21 @@ commands:
             Some("Visible")
         );
 
-        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
+        let upgrade_req = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+            tokio_tungstenite::tungstenite::http::Request::builder()
+                .method("GET")
+                .uri(format!("ws://{addr}/"))
+                .header("Host", addr.to_string())
+                .header("Upgrade", "websocket")
+                .header("Connection", "Upgrade")
+                .header("Sec-WebSocket-Version", "13")
+                .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+                .header("X-Clawchat-User-Id", "test-user-id")
+                .body(())
+                .unwrap()
+        )
+        .unwrap();
+        let (mut ws, _) = tokio_tungstenite::connect_async(upgrade_req)
             .await
             .unwrap();
         let _ = recv_ws_json(&mut ws).await;
