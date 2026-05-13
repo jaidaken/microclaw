@@ -82,7 +82,7 @@ pub(super) async fn api_list_skills(
     responses(
         (status = 200, description = "Skill enabled", body = SkillToggleResponse),
         (status = 401, description = "Missing or invalid credentials"),
-        (status = 403, description = "Insufficient scope (requires Write)"),
+        (status = 403, description = "Insufficient scope (requires operator role)"),
         (status = 404, description = "Skill not found"),
         (status = 500, description = "Skill manager failed to enable"),
     ),
@@ -92,7 +92,10 @@ pub(super) async fn api_enable_skill(
     Path(name): Path<String>,
     State(state): State<WebState>,
 ) -> Result<Json<SkillToggleResponse>, (StatusCode, String)> {
-    require_scope(&state, &headers, AuthScope::Write).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Write).await?;
+    if !identity.is_operator() {
+        return Err((StatusCode::FORBIDDEN, "operator role required".into()));
+    }
 
     if !state.app_state.skills.has_skill(&name) {
         return Err((StatusCode::NOT_FOUND, "Skill not found".into()));
@@ -122,7 +125,7 @@ pub(super) async fn api_enable_skill(
     responses(
         (status = 200, description = "Skill disabled", body = SkillToggleResponse),
         (status = 401, description = "Missing or invalid credentials"),
-        (status = 403, description = "Insufficient scope (requires Write)"),
+        (status = 403, description = "Insufficient scope (requires operator role)"),
         (status = 404, description = "Skill not found"),
         (status = 500, description = "Skill manager failed to disable"),
     ),
@@ -132,7 +135,10 @@ pub(super) async fn api_disable_skill(
     Path(name): Path<String>,
     State(state): State<WebState>,
 ) -> Result<Json<SkillToggleResponse>, (StatusCode, String)> {
-    require_scope(&state, &headers, AuthScope::Write).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Write).await?;
+    if !identity.is_operator() {
+        return Err((StatusCode::FORBIDDEN, "operator role required".into()));
+    }
 
     if !state.app_state.skills.has_skill(&name) {
         return Err((StatusCode::NOT_FOUND, "Skill not found".into()));

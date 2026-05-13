@@ -1557,7 +1557,15 @@ async fn resolve_chat_id_for_session_key(
     user_id: &str,
 ) -> Result<i64, (StatusCode, String)> {
     if let Some(parsed) = parse_chat_id_from_session_key(session_key) {
-        return Ok(parsed);
+        let owner = call_blocking(state.app_state.db.clone(), move |db| {
+            db.get_chat_user_id(parsed)
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        match owner {
+            Some(o) if o == user_id => return Ok(parsed),
+            _ => return Err((StatusCode::NOT_FOUND, "session not found".into())),
+        }
     }
 
     let key = session_key.to_string();
@@ -1973,7 +1981,15 @@ async fn send_and_store_response_with_events(
     let session_key = normalize_session_key(body.session_key.as_deref());
     let parsed_chat_id = parse_chat_id_from_session_key(&session_key);
     let chat_id = if let Some(explicit_chat_id) = parsed_chat_id {
-        explicit_chat_id
+        let owner = call_blocking(state.app_state.db.clone(), move |db| {
+            db.get_chat_user_id(explicit_chat_id)
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        match owner {
+            Some(o) if o == user_id => explicit_chat_id,
+            _ => return Err((StatusCode::NOT_FOUND, "session not found".into())),
+        }
     } else {
         let session_key_for_lookup = session_key.clone();
         let user_id_for_lookup = user_id.clone();
@@ -4373,7 +4389,7 @@ mod tests {
         let app = build_router(web_state.clone());
         let db = web_state.app_state.db.clone();
         call_blocking(db, move |d| {
-            d.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 4242, Some("chat:4242"), "web")?;
+            d.upsert_chat("test-user-id", 4242, Some("chat:4242"), "web")?;
             d.save_session(4242, r#"[{"role":"user","content":"hi"}]"#)?;
             d.store_message(&StoredMessage {
                 id: "m1".into(),
@@ -4434,6 +4450,62 @@ mod tests {
             "old chat history should be removed by /clear"
         );
         assert_eq!(tasks_len, 1);
+    }
+
+    #[tokio::test]
+    async fn api_send_rejects_chat_owned_by_another_user() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        let app = build_router(web_state.clone());
+        let db = web_state.app_state.db.clone();
+        let alice_chat = call_blocking(db, move |d| {
+            d.upsert_chat("alice", 7777, Some("chat:7777"), "web")?;
+            Ok::<i64, microclaw_core::error::MicroClawError>(7777)
+        })
+        .await
+        .unwrap();
+        assert_eq!(alice_chat, 7777);
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/send")
+            .header("content-type", "application/json")
+            .header("X-Clawchat-User-Id", "bob")
+            .body(Body::from(
+                r#"{"session_key":"chat:7777","sender_name":"bob","message":"hi"}"#,
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "bob must not be able to write into alice's chat"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_skill_enable_rejects_member_role_key() {
+        let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        seed_test_api_key_with_scopes(
+            &web_state,
+            "member-write-secret",
+            &["member.self".to_string()],
+        )
+        .await;
+        let app = build_router(web_state.clone());
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/skills/somename/enable")
+            .header("authorization", "Bearer member-write-secret")
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "member-role keys must not toggle global skills"
+        );
     }
 
     #[tokio::test]
@@ -5845,7 +5917,7 @@ commands:
         let session_key_for_db = session_key.clone();
 
         call_blocking(web_state.app_state.db.clone(), move |db| {
-            db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), chat_id, Some(&session_key_for_db), "web")
+            db.upsert_chat("test-user-id", chat_id, Some(&session_key_for_db), "web")
         })
         .await
         .unwrap();
@@ -5874,9 +5946,12 @@ commands:
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
-            .await
-            .unwrap();
+        let ws_url = format!("ws://{addr}/");
+        let mut ws_req = <_ as tokio_tungstenite::tungstenite::client::IntoClientRequest>::into_client_request(ws_url).unwrap();
+        ws_req
+            .headers_mut()
+            .insert("X-Clawchat-User-Id", "test-user-id".parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(ws_req).await.unwrap();
         let _ = recv_ws_json(&mut ws).await;
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
             json!({
