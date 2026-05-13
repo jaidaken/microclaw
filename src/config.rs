@@ -834,6 +834,8 @@ pub struct A2APeerConfig {
     pub description: Option<String>,
     #[serde(default)]
     pub default_session_key: Option<String>,
+    #[serde(default)]
+    pub target_user_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -850,6 +852,8 @@ pub struct A2AConfig {
     pub shared_tokens: Vec<String>,
     #[serde(default)]
     pub peers: HashMap<String, A2APeerConfig>,
+    #[serde(default)]
+    pub default_user_id: Option<String>,
 }
 
 impl Default for A2AConfig {
@@ -861,6 +865,7 @@ impl Default for A2AConfig {
             agent_description: None,
             shared_tokens: Vec::new(),
             peers: HashMap::new(),
+            default_user_id: None,
         }
     }
 }
@@ -3714,6 +3719,7 @@ subagents:
                 bearer_token: Some(" token ".into()),
                 description: Some(" executes ".into()),
                 default_session_key: Some(" team/work ".into()),
+                target_user_id: None,
             },
         );
 

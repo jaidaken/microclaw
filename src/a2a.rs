@@ -36,6 +36,8 @@ pub struct A2AMessageRequest {
     pub source_agent: Option<String>,
     #[serde(default)]
     pub source_url: Option<String>,
+    #[serde(default)]
+    pub target_user_id: Option<String>,
     pub message: String,
 }
 
@@ -162,6 +164,7 @@ mod tests {
                 bearer_token: None,
                 description: None,
                 default_session_key: None,
+                target_user_id: None,
             },
         );
 

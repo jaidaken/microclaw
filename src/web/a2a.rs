@@ -31,6 +31,7 @@ pub(super) struct A2AMessageRequestSchema {
     pub sender_name: Option<String>,
     pub source_agent: Option<String>,
     pub source_url: Option<String>,
+    pub target_user_id: Option<String>,
     pub message: String,
 }
 
@@ -125,6 +126,27 @@ pub(super) async fn api_a2a_message(
     if message.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "message is required".into()));
     }
+    let target_user_id = body
+        .target_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            state
+                .app_state
+                .config
+                .a2a
+                .default_user_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .ok_or((
+            StatusCode::BAD_REQUEST,
+            "a2a_target_user_required: provide targetUserId in body or set a2a.default_user_id in config".into(),
+        ))?;
     let session_key = body
         .session_key
         .as_deref()
@@ -154,7 +176,7 @@ pub(super) async fn api_a2a_message(
             sender_name: Some(sender_name),
             message,
         },
-        microclaw_core::tenant::bootstrap_user_id(),
+        target_user_id,
     )
     .await?;
     let payload = result.0;

@@ -4815,6 +4815,57 @@ commands:
     }
 
     #[tokio::test]
+    async fn a2a_rejects_when_no_target_user() {
+        let mut cfg = test_config_template();
+        cfg.a2a.enabled = true;
+        cfg.a2a.shared_tokens = vec!["shared-secret".into()];
+        let app = build_router(test_web_state_from_app_state(
+            test_state_with_config(Box::new(DummyLlm), cfg),
+            WebLimits::default(),
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/a2a/message")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer shared-secret")
+            .body(Body::from(r#"{"message":"hi","sourceAgent":"worker"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("a2a_target_user_required"),
+            "expected a2a_target_user_required error code, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a2a_uses_default_user_id_when_target_user_missing() {
+        let mut cfg = test_config_template();
+        cfg.a2a.enabled = true;
+        cfg.a2a.shared_tokens = vec!["shared-secret".into()];
+        cfg.a2a.default_user_id = Some("a2a-service-user".into());
+        let app = build_router(test_web_state_from_app_state(
+            test_state_with_config(Box::new(DummyLlm), cfg),
+            WebLimits::default(),
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/a2a/message")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer shared-secret")
+            .body(Body::from(r#"{"message":"hi","sourceAgent":"worker"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn test_a2a_message_round_trip_works() {
         let mut cfg = test_config_template();
         cfg.a2a.enabled = true;
@@ -4833,7 +4884,7 @@ commands:
             .header("X-Clawchat-User-Id", "test-user-id")
             .header("authorization", "Bearer shared-secret")
             .body(Body::from(
-                r#"{"message":"hi","sourceAgent":"worker","sourceUrl":"https://worker.example.com"}"#,
+                r#"{"message":"hi","sourceAgent":"worker","sourceUrl":"https://worker.example.com","targetUserId":"a2a-target-user"}"#,
             ))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();

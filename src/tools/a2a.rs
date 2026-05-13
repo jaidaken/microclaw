@@ -169,6 +169,7 @@ impl Tool for A2ASendTool {
             sender_name: None,
             source_agent: Some(crate::a2a::local_agent_name(&self.config)),
             source_url: self.config.a2a.public_base_url.clone(),
+            target_user_id: peer.target_user_id.clone(),
             message: message.to_string(),
         };
 
@@ -244,6 +245,7 @@ mod tests {
                 bearer_token: Some("secret".into()),
                 description: Some("plans".into()),
                 default_session_key: Some("a2a:planner".into()),
+                target_user_id: None,
             },
         );
         let tool = A2AListPeersTool::new(&cfg);
@@ -296,6 +298,7 @@ mod tests {
                 bearer_token: Some("secret".into()),
                 description: None,
                 default_session_key: None,
+                target_user_id: None,
             },
         );
         let tool = A2ASendTool::new(&cfg);
