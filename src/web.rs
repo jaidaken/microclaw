@@ -1547,16 +1547,18 @@ async fn resolve_chat_id_for_session_key_read(
     user_filter: Option<&str>,
 ) -> Result<i64, (StatusCode, String)> {
     if let Some(parsed) = parse_chat_id_from_session_key(session_key) {
-        let exists = call_blocking(state.app_state.db.clone(), move |db| {
-            db.get_chat_type(parsed)
+        let owner = call_blocking(state.app_state.db.clone(), move |db| {
+            db.get_chat_user_id(parsed)
         })
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .is_some();
-        if exists {
-            return Ok(parsed);
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        match (owner, user_filter) {
+            (Some(o), Some(want)) if o != want => {
+                return Err((StatusCode::NOT_FOUND, "session not found".into()));
+            }
+            (Some(_), _) => return Ok(parsed),
+            (None, _) => return Err((StatusCode::NOT_FOUND, "session not found".into())),
         }
-        return Err((StatusCode::NOT_FOUND, "session not found".into()));
     }
 
     let key = session_key.to_string();
