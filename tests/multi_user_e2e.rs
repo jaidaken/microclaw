@@ -171,6 +171,72 @@ fn delete_user_data_purges_chats_memories_usage_for_target_user_only() {
 }
 
 #[test]
+fn cross_user_memory_lookup_isolates_globals() {
+    let (db, dir) = test_db();
+
+    let alice = "user-alice";
+    let bob = "user-bob";
+    db.resolve_or_create_chat_id(alice, "web", "main", Some("main"), "web")
+        .unwrap();
+    db.insert_memory_with_metadata(alice, None, "alice global fact", "PREFERENCE", "explicit", 0.9)
+        .unwrap();
+    db.insert_memory_with_metadata(bob, None, "bob global fact", "PREFERENCE", "explicit", 0.9)
+        .unwrap();
+
+    let alice_view = db.get_memories_for_context(alice, 0, 100).unwrap();
+    let bob_view = db.get_memories_for_context(bob, 0, 100).unwrap();
+    assert_eq!(alice_view.len(), 1);
+    assert!(alice_view[0].content.starts_with("alice "));
+    assert_eq!(bob_view.len(), 1);
+    assert!(bob_view[0].content.starts_with("bob "));
+
+    cleanup(&dir);
+}
+
+#[test]
+fn archive_excess_memories_scopes_to_user() {
+    let (db, dir) = test_db();
+
+    let alice = "user-alice";
+    let bob = "user-bob";
+    let alice_chat = db
+        .resolve_or_create_chat_id(alice, "web", "main", Some("main"), "web")
+        .unwrap();
+    let bob_chat = db
+        .resolve_or_create_chat_id(bob, "web", "main", Some("main"), "web")
+        .unwrap();
+    for i in 0..6 {
+        db.insert_memory_with_metadata(
+            alice,
+            Some(alice_chat),
+            &format!("alice fact {i}"),
+            "KNOWLEDGE",
+            "explicit",
+            0.5,
+        )
+        .unwrap();
+    }
+    for i in 0..6 {
+        db.insert_memory_with_metadata(
+            bob,
+            Some(bob_chat),
+            &format!("bob fact {i}"),
+            "KNOWLEDGE",
+            "explicit",
+            0.5,
+        )
+        .unwrap();
+    }
+
+    let archived = db.archive_excess_memories(alice, Some(alice_chat), 3).unwrap();
+    assert_eq!(archived, 3, "should archive alice's 3 lowest-confidence");
+    let bob_active = db.get_memories_for_context(bob, bob_chat, 100).unwrap();
+    assert_eq!(bob_active.len(), 6, "bob's memories untouched by alice archive");
+
+    cleanup(&dir);
+}
+
+#[test]
 fn cross_user_chat_owner_lookup_returns_correct_user() {
     let (db, dir) = test_db();
 
