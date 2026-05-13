@@ -2429,6 +2429,7 @@ async fn process_weixin_inbound_message(
             caller_channel: &runtime_ctx.channel_name,
             chat_id,
             chat_type: "private",
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         },
         None,
         None,

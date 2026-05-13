@@ -1391,6 +1391,7 @@ async fn handle_slack_message(
             caller_channel: &runtime.channel_name,
             chat_id,
             chat_type: slack_chat_type,
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         },
         None,
         image_data,

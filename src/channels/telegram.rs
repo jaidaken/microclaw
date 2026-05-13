@@ -1145,6 +1145,7 @@ async fn handle_message(
             caller_channel: &tg_channel_name,
             chat_id,
             chat_type: runtime_chat_type,
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         },
         None,
         image_data,

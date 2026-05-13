@@ -28,11 +28,13 @@ use opentelemetry_semantic_conventions::attribute::{
     GEN_AI_USAGE_OUTPUT_TOKENS, USER_ID,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct AgentRequestContext<'a> {
     pub caller_channel: &'a str,
     pub chat_id: i64,
     pub chat_type: &'a str,
+    /// Cow so call sites can pass an owned bootstrap_user_id() String or a borrowed header str.
+    pub user_id: std::borrow::Cow<'a, str>,
 }
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
@@ -207,7 +209,7 @@ pub async fn process_with_agent_with_events_guarded(
             }
             Ok(run_control::STOPPED_TEXT.to_string())
         }
-        out = engine.process_with_events(state, context, override_prompt, image_data, event_tx) => out,
+        out = engine.process_with_events(state, context.clone(), override_prompt, image_data, event_tx) => out,
     };
     run_control::unregister_run(context.caller_channel, context.chat_id, run_id).await;
 
@@ -241,6 +243,7 @@ pub fn maybe_rerun_for_pending(state: Arc<AppState>, channel: &str, chat_id: i64
             caller_channel: &channel,
             chat_id,
             chat_type: &chat_type,
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         };
         if let Err(e) = process_with_agent_with_events(&state, ctx, None, None, None).await {
             warn!(
@@ -560,7 +563,7 @@ pub(crate) async fn process_with_agent_impl(
 
     let result = process_with_agent_logic(
         state,
-        context,
+        context.clone(),
         override_prompt,
         image_data,
         event_tx,
@@ -3053,6 +3056,7 @@ mod tests {
                     caller_channel,
                     chat_id,
                     chat_type,
+                    user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
                 },
                 None,
                 None,
@@ -3114,6 +3118,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3136,6 +3141,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3186,6 +3192,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3263,6 +3270,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3580,6 +3588,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3618,6 +3627,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3666,6 +3676,7 @@ mod tests {
                 caller_channel: "feishu",
                 chat_id,
                 chat_type: "private",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3709,6 +3720,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -3748,6 +3760,7 @@ mod tests {
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,
@@ -4208,6 +4221,7 @@ timeout_ms: 1000
                 caller_channel: "web",
                 chat_id,
                 chat_type: "web",
+                user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
             },
             None,
             None,

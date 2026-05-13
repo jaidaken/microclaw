@@ -666,6 +666,7 @@ async fn handle_whatsapp_message(
             caller_channel: &runtime.channel_name,
             chat_id,
             chat_type: "private",
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         },
         None,
         None,

@@ -1987,6 +1987,7 @@ async fn send_and_store_response_with_events(
         caller_channel: "web",
         chat_id,
         chat_type: "web",
+        user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
     };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
     let saw_send_message_tool = Arc::new(AtomicBool::new(false));

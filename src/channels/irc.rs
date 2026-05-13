@@ -526,6 +526,7 @@ async fn handle_irc_message(
             caller_channel: "irc",
             chat_id,
             chat_type: runtime_chat_type,
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         },
         None,
         None,

@@ -378,6 +378,7 @@ impl MicroClawAcpAgent {
             caller_channel: ACP_CHANNEL,
             chat_id,
             chat_type: ACP_CHAT_TYPE,
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         };
         let result = process_with_agent_with_events(
             &self.app_state,

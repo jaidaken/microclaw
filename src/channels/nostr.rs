@@ -456,6 +456,7 @@ async fn nostr_webhook_handler(
             } else {
                 "group"
             },
+            user_id: std::borrow::Cow::Owned(microclaw_core::tenant::bootstrap_user_id()),
         },
         None,
         None,
