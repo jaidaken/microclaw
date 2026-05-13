@@ -8,6 +8,7 @@ const ALLOWED_API_KEY_SCOPES: &[&str] = &[
     "operator.write",
     "operator.admin",
     "operator.approvals",
+    super::middleware::MEMBER_SELF_SCOPE,
 ];
 
 #[derive(Debug, Deserialize, ToSchema)]
