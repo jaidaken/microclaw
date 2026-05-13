@@ -3,6 +3,7 @@ use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SubagentObservabilityQuery {
     pub session_key: Option<String>,
     pub scope: Option<String>,
@@ -10,6 +11,7 @@ pub struct SubagentObservabilityQuery {
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 #[allow(dead_code)]
 pub(super) struct MetricsHistoryQueryParams {
     pub minutes: Option<i64>,

@@ -790,6 +790,7 @@ struct HookWakeRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct StreamQuery {
     run_id: String,
     last_event_id: Option<u64>,
@@ -801,16 +802,19 @@ struct ResetRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct RunStatusQuery {
     run_id: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct UsageQuery {
     session_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct MemoryObservabilityQuery {
     session_key: Option<String>,
     scope: Option<String>, // chat | global
@@ -900,6 +904,7 @@ struct SessionTreeQuery {
 }
 
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 struct AuditQuery {
     kind: Option<String>,
     limit: Option<usize>,
@@ -2346,6 +2351,31 @@ mod tests {
             "expected >= 30 operations in /openapi.json, got {}",
             paths.len()
         );
+        // Regression guard: query params must declare `in: "query"`,
+        // never `in: "path"`. IntoParams without `parameter_in = Query`
+        // defaults to path which Spectral rejects (path-params rule).
+        for (path, methods) in paths.iter() {
+            let obj = methods.as_object().expect("path entry is an object");
+            for (method, op) in obj.iter() {
+                if !["get", "post", "put", "delete", "patch"].contains(&method.as_str()) {
+                    continue;
+                }
+                let params = op.get("parameters").and_then(|v| v.as_array());
+                let Some(params) = params else { continue };
+                for p in params {
+                    let in_ = p.get("in").and_then(|v| v.as_str()).unwrap_or("");
+                    if in_ != "path" {
+                        continue;
+                    }
+                    let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    assert!(
+                        path.contains(&format!("{{{name}}}")),
+                        "path param {name:?} on {method} {path} must appear as a path template placeholder; \
+                         did you forget #[into_params(parameter_in = Query)] on the IntoParams struct?"
+                    );
+                }
+            }
+        }
         // Spot-check a few key paths.
         for required in [
             "/health",
