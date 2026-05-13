@@ -234,7 +234,10 @@ pub struct AuditLogRecord {
 pub type SessionMetaRow = (String, String, Option<String>, Option<i64>);
 pub type SessionTreeRow = (i64, Option<String>, Option<i64>, String);
 
-const SCHEMA_VERSION_CURRENT: i64 = 25;
+const SCHEMA_VERSION_CURRENT: i64 = 26;
+
+/// Required at migration 26 startup; clawchat seeds it from `users` (`bootstrapped=1`).
+pub const BOOTSTRAP_USER_ID_ENV: &str = "MICROCLAW_BOOTSTRAP_USER_ID";
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -1048,6 +1051,143 @@ fn apply_schema_migrations(conn: &Connection) -> Result<(), MicroClawError> {
         )?;
         set_schema_version(conn, 25)?;
         version = 25;
+    }
+    if version < 26 {
+        // M1.5: add user_id to chats/memories/llm_usage_logs via table-rewrite.
+        let existing_rows: i64 = conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM chats)
+                  + (SELECT COUNT(*) FROM memories)
+                  + (SELECT COUNT(*) FROM llm_usage_logs)",
+            [],
+            |row| row.get(0),
+        )?;
+        let bootstrap_user_id = match std::env::var(BOOTSTRAP_USER_ID_ENV) {
+            Ok(v) if !v.trim().is_empty() => v,
+            _ if existing_rows == 0 => String::from("__pending__"),
+            _ => {
+                return Err(MicroClawError::Config(format!(
+                    "migration 26 needs {} (UUID-shaped) because existing per-user rows must be backfilled",
+                    BOOTSTRAP_USER_ID_ENV
+                )));
+            }
+        };
+        conn.execute_batch(
+            "CREATE TABLE chats_v26 (
+                chat_id INTEGER PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                chat_title TEXT,
+                chat_type TEXT NOT NULL DEFAULT 'private',
+                last_message_time TEXT NOT NULL,
+                channel TEXT,
+                external_chat_id TEXT
+            );",
+        )?;
+        conn.execute(
+            "INSERT INTO chats_v26 (chat_id, user_id, chat_title, chat_type,
+                                    last_message_time, channel, external_chat_id)
+             SELECT chat_id, ?1, chat_title, chat_type,
+                    last_message_time, channel, external_chat_id
+             FROM chats",
+            [&bootstrap_user_id],
+        )?;
+        conn.execute_batch(
+            "DROP TABLE chats;
+             ALTER TABLE chats_v26 RENAME TO chats;
+             CREATE INDEX idx_chats_user_id ON chats(user_id);
+             CREATE INDEX idx_chats_user_last_msg
+                 ON chats(user_id, last_message_time DESC);",
+        )?;
+
+        conn.execute_batch(
+            "CREATE TABLE memories_v26 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                chat_id INTEGER,
+                content TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                embedding_model TEXT,
+                confidence REAL NOT NULL DEFAULT 0.70,
+                source TEXT NOT NULL DEFAULT 'legacy',
+                last_seen_at TEXT NOT NULL,
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                archived_at TEXT,
+                chat_channel TEXT,
+                external_chat_id TEXT
+            );",
+        )?;
+        conn.execute(
+            "INSERT INTO memories_v26 (id, user_id, chat_id, content, category,
+                                       created_at, updated_at, embedding_model,
+                                       confidence, source, last_seen_at,
+                                       is_archived, archived_at, chat_channel,
+                                       external_chat_id)
+             SELECT id, ?1, chat_id, content, category,
+                    created_at, updated_at, embedding_model,
+                    confidence, source, last_seen_at,
+                    is_archived, archived_at, chat_channel,
+                    external_chat_id
+             FROM memories",
+            [&bootstrap_user_id],
+        )?;
+        conn.execute_batch(
+            "DROP TABLE memories;
+             ALTER TABLE memories_v26 RENAME TO memories;
+             CREATE INDEX idx_memories_chat ON memories(chat_id);
+             CREATE INDEX idx_memories_user_id ON memories(user_id);
+             CREATE INDEX idx_memories_user_active_updated
+                 ON memories(user_id, is_archived, updated_at DESC);
+             CREATE INDEX idx_memories_user_confidence
+                 ON memories(user_id, confidence DESC);",
+        )?;
+
+        conn.execute_batch(
+            "CREATE TABLE llm_usage_logs_v26 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                chat_id INTEGER NOT NULL,
+                caller_channel TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL,
+                request_kind TEXT NOT NULL DEFAULT 'agent_loop',
+                created_at TEXT NOT NULL
+            );",
+        )?;
+        conn.execute(
+            "INSERT INTO llm_usage_logs_v26 (id, user_id, chat_id, caller_channel,
+                                             provider, model, input_tokens,
+                                             output_tokens, total_tokens,
+                                             request_kind, created_at)
+             SELECT id, ?1, chat_id, caller_channel,
+                    provider, model, input_tokens,
+                    output_tokens, total_tokens,
+                    request_kind, created_at
+             FROM llm_usage_logs",
+            [&bootstrap_user_id],
+        )?;
+        conn.execute_batch(
+            "DROP TABLE llm_usage_logs;
+             ALTER TABLE llm_usage_logs_v26 RENAME TO llm_usage_logs;
+             CREATE INDEX idx_llm_usage_chat_created
+                 ON llm_usage_logs(chat_id, created_at);
+             CREATE INDEX idx_llm_usage_created
+                 ON llm_usage_logs(created_at);
+             CREATE INDEX idx_llm_usage_user_created
+                 ON llm_usage_logs(user_id, created_at);",
+        )?;
+
+        conn.execute_batch(
+            "ALTER TABLE audit_logs ADD COLUMN subject_user_id TEXT;
+             CREATE INDEX IF NOT EXISTS idx_audit_logs_subject_user_id
+                 ON audit_logs(subject_user_id, created_at DESC);",
+        )?;
+
+        set_schema_version(conn, 26)?;
+        version = 26;
     }
     if version != SCHEMA_VERSION_CURRENT {
         set_schema_version(conn, SCHEMA_VERSION_CURRENT)?;
@@ -5281,6 +5421,10 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// MICROCLAW_BOOTSTRAP_USER_ID is process-global; serialize tests touching it.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_db() -> (Database, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("microclaw_test_{}", uuid::Uuid::new_v4()));
@@ -7434,6 +7578,193 @@ mod tests {
         assert_eq!(nearest[0].0, id1);
         assert!(nearest[0].1 >= 0.0);
 
+        cleanup(&dir);
+    }
+
+    fn seed_v25_schema(db_path: &std::path::Path) {
+        let conn = Connection::open(db_path).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE db_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO db_meta(key, value) VALUES ('schema_version', '25');
+             CREATE TABLE chats (
+                chat_id INTEGER PRIMARY KEY,
+                chat_title TEXT,
+                chat_type TEXT NOT NULL DEFAULT 'private',
+                last_message_time TEXT NOT NULL,
+                channel TEXT,
+                external_chat_id TEXT
+             );
+             CREATE TABLE memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                content TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                embedding_model TEXT,
+                confidence REAL NOT NULL DEFAULT 0.70,
+                source TEXT NOT NULL DEFAULT 'legacy',
+                last_seen_at TEXT NOT NULL,
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                archived_at TEXT,
+                chat_channel TEXT,
+                external_chat_id TEXT
+             );
+             CREATE TABLE llm_usage_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                caller_channel TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL,
+                request_kind TEXT NOT NULL DEFAULT 'agent_loop',
+                created_at TEXT NOT NULL
+             );
+             CREATE TABLE audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                target TEXT,
+                status TEXT NOT NULL,
+                detail TEXT,
+                created_at TEXT NOT NULL
+             );
+             INSERT INTO chats(chat_id, chat_title, chat_type, last_message_time)
+                  VALUES (1, 'one', 'private', '2026-05-13T00:00:00Z'),
+                         (2, 'two', 'private', '2026-05-13T00:00:00Z');
+             INSERT INTO memories(chat_id, content, category, created_at, updated_at, last_seen_at)
+                  VALUES (1, 'fact-a', 'KNOWLEDGE', '2026-05-13T00:00:00Z',
+                          '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z'),
+                         (NULL, 'global-fact', 'IDENTITY', '2026-05-13T00:00:00Z',
+                          '2026-05-13T00:00:00Z', '2026-05-13T00:00:00Z');
+             INSERT INTO llm_usage_logs(chat_id, caller_channel, provider, model,
+                                        input_tokens, output_tokens, total_tokens, created_at)
+                  VALUES (1, 'web', 'anthropic', 'claude-haiku-4-5',
+                          10, 20, 30, '2026-05-13T00:00:00Z');",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn migration_26_backfills_user_id_from_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir()
+            .join(format!("microclaw_mig26_backfill_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("microclaw.db");
+        seed_v25_schema(&db_path);
+
+        let bootstrap_user = "user-12345678-aaaa-bbbb-cccc-1234567890ab";
+        unsafe {
+            std::env::set_var(BOOTSTRAP_USER_ID_ENV, bootstrap_user);
+        }
+
+        let db = Database::new(dir.to_str().unwrap()).unwrap();
+        let conn = db.lock_conn();
+
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM db_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION_CURRENT.to_string());
+
+        assert!(table_has_column(&conn, "chats", "user_id").unwrap());
+        assert!(table_has_column(&conn, "memories", "user_id").unwrap());
+        assert!(table_has_column(&conn, "llm_usage_logs", "user_id").unwrap());
+        assert!(table_has_column(&conn, "audit_logs", "subject_user_id").unwrap());
+
+        let chats_user_ids: Vec<String> = conn
+            .prepare("SELECT user_id FROM chats ORDER BY chat_id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            chats_user_ids,
+            vec![bootstrap_user.to_string(), bootstrap_user.to_string()]
+        );
+
+        let mem_user_ids: Vec<String> = conn
+            .prepare("SELECT user_id FROM memories ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            mem_user_ids,
+            vec![bootstrap_user.to_string(), bootstrap_user.to_string()]
+        );
+
+        let llm_user_ids: Vec<String> = conn
+            .prepare("SELECT user_id FROM llm_usage_logs ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(llm_user_ids, vec![bootstrap_user.to_string()]);
+
+        drop(conn);
+        drop(db);
+        unsafe {
+            std::env::remove_var(BOOTSTRAP_USER_ID_ENV);
+        }
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn migration_26_rejects_missing_env_var_when_data_exists() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir()
+            .join(format!("microclaw_mig26_reject_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("microclaw.db");
+        seed_v25_schema(&db_path);
+
+        unsafe {
+            std::env::remove_var(BOOTSTRAP_USER_ID_ENV);
+        }
+        let err = match Database::new(dir.to_str().unwrap()) {
+            Ok(_) => panic!("expected migration 26 to refuse opening without env var"),
+            Err(e) => e,
+        };
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("MICROCLAW_BOOTSTRAP_USER_ID"),
+            "expected message about env var, got: {msg}"
+        );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn migration_26_allows_missing_env_var_when_data_is_empty() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir()
+            .join(format!("microclaw_mig26_empty_{}", uuid::Uuid::new_v4()));
+        unsafe {
+            std::env::remove_var(BOOTSTRAP_USER_ID_ENV);
+        }
+        let db = Database::new(dir.to_str().unwrap()).expect("fresh DB should migrate cleanly");
+        let conn = db.lock_conn();
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM db_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION_CURRENT.to_string());
+        assert!(table_has_column(&conn, "chats", "user_id").unwrap());
+        drop(conn);
         cleanup(&dir);
     }
 }
