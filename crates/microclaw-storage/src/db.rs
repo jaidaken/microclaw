@@ -1783,12 +1783,28 @@ impl Database {
     }
 
     pub fn get_chat_type(&self, chat_id: i64) -> Result<Option<String>, MicroClawError> {
+        self.get_chat_type_scoped(chat_id, None)
+    }
+
+    pub fn get_chat_type_scoped(
+        &self,
+        chat_id: i64,
+        user_id: Option<&str>,
+    ) -> Result<Option<String>, MicroClawError> {
         let conn = self.lock_conn();
-        let result = conn.query_row(
-            "SELECT chat_type FROM chats WHERE chat_id = ?1",
-            params![chat_id],
-            |row| row.get::<_, String>(0),
-        );
+        let result = if let Some(uid) = user_id {
+            conn.query_row(
+                "SELECT chat_type FROM chats WHERE chat_id = ?1 AND user_id = ?2",
+                params![chat_id, uid],
+                |row| row.get::<_, String>(0),
+            )
+        } else {
+            conn.query_row(
+                "SELECT chat_type FROM chats WHERE chat_id = ?1",
+                params![chat_id],
+                |row| row.get::<_, String>(0),
+            )
+        };
         match result {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1846,12 +1862,28 @@ impl Database {
     }
 
     pub fn get_chat_channel(&self, chat_id: i64) -> Result<Option<String>, MicroClawError> {
+        self.get_chat_channel_scoped(chat_id, None)
+    }
+
+    pub fn get_chat_channel_scoped(
+        &self,
+        chat_id: i64,
+        user_id: Option<&str>,
+    ) -> Result<Option<String>, MicroClawError> {
         let conn = self.lock_conn();
-        let result = conn.query_row(
-            "SELECT channel FROM chats WHERE chat_id = ?1",
-            params![chat_id],
-            |row| row.get::<_, Option<String>>(0),
-        );
+        let result = if let Some(uid) = user_id {
+            conn.query_row(
+                "SELECT channel FROM chats WHERE chat_id = ?1 AND user_id = ?2",
+                params![chat_id, uid],
+                |row| row.get::<_, Option<String>>(0),
+            )
+        } else {
+            conn.query_row(
+                "SELECT channel FROM chats WHERE chat_id = ?1",
+                params![chat_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+        };
         match result {
             Ok(v) => Ok(v),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -1860,12 +1892,28 @@ impl Database {
     }
 
     pub fn get_chat_external_id(&self, chat_id: i64) -> Result<Option<String>, MicroClawError> {
+        self.get_chat_external_id_scoped(chat_id, None)
+    }
+
+    pub fn get_chat_external_id_scoped(
+        &self,
+        chat_id: i64,
+        user_id: Option<&str>,
+    ) -> Result<Option<String>, MicroClawError> {
         let conn = self.lock_conn();
-        let result = conn.query_row(
-            "SELECT external_chat_id FROM chats WHERE chat_id = ?1",
-            params![chat_id],
-            |row| row.get::<_, Option<String>>(0),
-        );
+        let result = if let Some(uid) = user_id {
+            conn.query_row(
+                "SELECT external_chat_id FROM chats WHERE chat_id = ?1 AND user_id = ?2",
+                params![chat_id, uid],
+                |row| row.get::<_, Option<String>>(0),
+            )
+        } else {
+            conn.query_row(
+                "SELECT external_chat_id FROM chats WHERE chat_id = ?1",
+                params![chat_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+        };
         match result {
             Ok(v) => Ok(v),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -7940,7 +7988,9 @@ mod tests {
 
     #[test]
     fn migration_26_allows_missing_env_var_when_data_is_empty() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let dir = std::env::temp_dir()
             .join(format!("microclaw_mig26_empty_{}", uuid::Uuid::new_v4()));
         unsafe {
@@ -7957,6 +8007,54 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION_CURRENT.to_string());
         assert!(table_has_column(&conn, "chats", "user_id").unwrap());
+        drop(conn);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn fresh_db_at_v26_creates_indexes_and_user_columns_idempotent() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir()
+            .join(format!("microclaw_mig26_fresh_{}", uuid::Uuid::new_v4()));
+        unsafe {
+            std::env::remove_var(BOOTSTRAP_USER_ID_ENV);
+        }
+        let db = Database::new(dir.to_str().unwrap()).expect("fresh DB should migrate to v26");
+        drop(db);
+        let db2 = Database::new(dir.to_str().unwrap())
+            .expect("second open of same DB should also succeed (no re-create-index race)");
+        let conn = db2.lock_conn();
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM db_meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION_CURRENT.to_string());
+        for column in ["user_id"] {
+            for table in ["chats", "memories", "llm_usage_logs"] {
+                assert!(
+                    table_has_column(&conn, table, column).unwrap(),
+                    "{table}.{column} present"
+                );
+            }
+        }
+        assert!(table_has_column(&conn, "audit_logs", "subject_user_id").unwrap());
+        for idx in [
+            "idx_chats_user_id",
+            "idx_memories_user_active_updated",
+            "idx_llm_usage_user_created",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?1",
+                    params![idx],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "{idx} index present");
+        }
         drop(conn);
         cleanup(&dir);
     }

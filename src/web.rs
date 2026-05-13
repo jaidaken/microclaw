@@ -1445,37 +1445,8 @@ fn resolve_hook_session_key(
     Ok(default_key)
 }
 
-pub const X_CLAWCHAT_USER_ID: &str = "X-Clawchat-User-Id";
-
-/// M1.5 rule: per-user web handlers must extract user_id via this helper (400 if missing).
-pub fn extract_user_id(headers: &HeaderMap) -> Result<String, (StatusCode, String)> {
-    let raw = headers.get(X_CLAWCHAT_USER_ID).ok_or((
-        StatusCode::BAD_REQUEST,
-        "missing_user_header: X-Clawchat-User-Id required on this endpoint".into(),
-    ))?;
-    let s = raw
-        .to_str()
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                "missing_user_header: header is not ASCII".into(),
-            )
-        })?
-        .trim();
-    if s.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "missing_user_header: empty value".into(),
-        ));
-    }
-    if s.len() > 64 || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "missing_user_header: invalid shape".into(),
-        ));
-    }
-    Ok(s.to_string())
-}
+pub mod user_id;
+pub use user_id::{extract_user_id, X_CLAWCHAT_USER_ID};
 
 fn require_hook_auth(state: &WebState, headers: &HeaderMap) -> Result<(), (StatusCode, String)> {
     let expected = web_channel_string(&state.app_state.config, "hooks_token")
@@ -1886,7 +1857,15 @@ async fn api_hook_agent(
         sender_name: body.sender_name.or(body.name),
         message: body.message,
     };
-    stream::start_stream_run_with_actor(state, send, "hook:token".to_string(), "/hooks/agent", microclaw_core::tenant::bootstrap_user_id()).await
+    // hooks auth via shared operator token; per-user routing intentionally not supported here.
+    stream::start_stream_run_with_actor(
+        state,
+        send,
+        "hook:token".to_string(),
+        "/hooks/agent",
+        microclaw_core::tenant::bootstrap_user_id(),
+    )
+    .await
 }
 
 #[utoipa::path(
@@ -1931,6 +1910,7 @@ async fn api_hook_wake(
         .trim()
         .to_ascii_lowercase();
     if mode == "next-heartbeat" {
+        // hooks auth via operator shared token; chats are operator-scoped.
         let hook_user_id = microclaw_core::tenant::bootstrap_user_id();
         let chat_id =
             enqueue_hook_message(&state, &session_key, &sender_name, &message, &hook_user_id)
@@ -1954,7 +1934,15 @@ async fn api_hook_wake(
         sender_name: Some(sender_name),
         message,
     };
-    stream::start_stream_run_with_actor(state, send, "hook:token".to_string(), "/hooks/wake", microclaw_core::tenant::bootstrap_user_id()).await
+    // hooks auth via shared operator token; chats are operator-scoped.
+    stream::start_stream_run_with_actor(
+        state,
+        send,
+        "hook:token".to_string(),
+        "/hooks/wake",
+        microclaw_core::tenant::bootstrap_user_id(),
+    )
+    .await
 }
 
 async fn send_and_store_response(
