@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::memory_backend::MemoryBackend;
 use microclaw_core::llm_types::ToolDefinition;
@@ -325,10 +325,18 @@ impl Tool for WriteMemoryTool {
                     {
                         if memory_quality::memory_quality_ok(&normalized) {
                             let chat_id = memory_chat_id;
-                            let user_id_for_write = auth_context_from_input(&input)
+                            let user_id_for_write = match auth_context_from_input(&input)
                                 .map(|a| a.user_id)
                                 .filter(|u| !u.is_empty())
-                                .unwrap_or_else(microclaw_core::tenant::bootstrap_user_id);
+                            {
+                                Some(u) => u,
+                                None => {
+                                    warn!(
+                                        "WriteMemoryTool: auth_context.user_id missing; falling back to bootstrap_user_id"
+                                    );
+                                    microclaw_core::tenant::bootstrap_user_id()
+                                }
+                            };
                             if let Ok(memory_id) = self
                                 .memory_backend
                                 .insert_memory_with_metadata(

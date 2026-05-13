@@ -361,6 +361,10 @@ async fn run_sub_agent_task(
             let model = config.model.clone();
             let chat_id = auth_context.caller_chat_id;
             let user_id_for_usage = if auth_context.user_id.is_empty() {
+                tracing::warn!(
+                    chat_id = auth_context.caller_chat_id,
+                    "subagent log_llm_usage: auth_context.user_id empty; falling back to bootstrap_user_id"
+                );
                 microclaw_core::tenant::bootstrap_user_id()
             } else {
                 auth_context.user_id.clone()
