@@ -154,6 +154,7 @@ pub(super) async fn api_a2a_message(
             sender_name: Some(sender_name),
             message,
         },
+        microclaw_core::tenant::bootstrap_user_id(),
     )
     .await?;
     let payload = result.0;

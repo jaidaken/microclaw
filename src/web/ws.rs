@@ -863,9 +863,7 @@ async fn handle_request_frame(
                 state.clone(),
                 send_body,
                 identity.actor.clone(),
-                "/",
-            )
-            .await
+                "/", microclaw_core::tenant::bootstrap_user_id()).await
             {
                 Ok(resp) => resp,
                 Err((_, msg)) => {
@@ -1086,9 +1084,7 @@ async fn handle_request_frame(
                 state.clone(),
                 send_body,
                 identity.actor.clone(),
-                "/",
-            )
-            .await
+                "/", microclaw_core::tenant::bootstrap_user_id()).await
             {
                 Ok(resp) => resp,
                 Err((_, msg)) => {
@@ -1230,9 +1226,7 @@ async fn handle_request_frame(
                 state.clone(),
                 send_body,
                 identity.actor.clone(),
-                "/",
-            )
-            .await
+                "/", microclaw_core::tenant::bootstrap_user_id()).await
             {
                 Ok(resp) => resp,
                 Err((_, msg)) => {

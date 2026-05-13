@@ -22,7 +22,8 @@ pub(super) async fn api_send_stream(
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
     let identity = require_scope(&state, &headers, AuthScope::Write).await?;
-    start_stream_run_internal(state, body, identity.actor, "/api/send_stream").await
+    let user_id = super::extract_user_id(&headers)?;
+    start_stream_run_internal(state, body, identity.actor, "/api/send_stream", user_id).await
 }
 
 pub(super) async fn start_stream_run_with_actor(
@@ -30,8 +31,9 @@ pub(super) async fn start_stream_run_with_actor(
     body: SendRequest,
     actor: String,
     endpoint: &'static str,
+    user_id: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    start_stream_run_internal(state, body, actor, endpoint).await
+    start_stream_run_internal(state, body, actor, endpoint, user_id).await
 }
 
 async fn start_stream_run_internal(
@@ -39,6 +41,7 @@ async fn start_stream_run_internal(
     body: SendRequest,
     actor: String,
     endpoint: &'static str,
+    user_id: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let start = Instant::now();
 
@@ -75,6 +78,7 @@ async fn start_stream_run_internal(
 
     let state_for_task = state.clone();
     let run_id_for_task = run_id.clone();
+    let user_id_for_task = user_id.clone();
     let lock = state
         .session_hub
         .lock_for(&session_key, &state.limits)
@@ -222,7 +226,7 @@ async fn start_stream_run_internal(
 
             let abort_entry = abort_entry.clone();
 
-            match send_and_store_response_with_events(state_for_task.clone(), body, Some(&evt_tx))
+            match send_and_store_response_with_events(state_for_task.clone(), body, Some(&evt_tx), user_id_for_task.clone())
                 .await
             {
                 Ok(resp) => {
