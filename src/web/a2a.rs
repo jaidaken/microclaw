@@ -46,6 +46,7 @@ pub(super) struct A2AMessageResponseSchema {
 }
 
 fn a2a_token_allowed(config: &Config, headers: &HeaderMap) -> bool {
+    use sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
     let Some(raw) = headers.get("authorization").and_then(|v| v.to_str().ok()) else {
         return false;
@@ -61,15 +62,12 @@ fn a2a_token_allowed(config: &Config, headers: &HeaderMap) -> bool {
     let Some(token) = parts.next().map(str::trim).filter(|v| !v.is_empty()) else {
         return false;
     };
-    let token_bytes = token.as_bytes();
+    let token_digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
     let mut matched = 0u8;
     for candidate in &config.a2a.shared_tokens {
-        let cand_bytes = candidate.as_bytes();
-        if cand_bytes.len() == token_bytes.len()
-            && bool::from(cand_bytes.ct_eq(token_bytes))
-        {
-            matched = 1;
-        }
+        let cand_digest: [u8; 32] = Sha256::digest(candidate.as_bytes()).into();
+        let eq: u8 = cand_digest.ct_eq(&token_digest).unwrap_u8();
+        matched |= eq;
     }
     matched == 1
 }

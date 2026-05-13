@@ -4874,6 +4874,48 @@ commands:
     }
 
     #[tokio::test]
+    async fn a2a_rejects_shorter_token_prefix_of_valid_secret() {
+        let mut cfg = test_config_template();
+        cfg.a2a.enabled = true;
+        cfg.a2a.shared_tokens = vec!["shared-secret-long".into()];
+        let app = build_router(test_web_state_from_app_state(
+            test_state_with_config(Box::new(DummyLlm), cfg),
+            WebLimits::default(),
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/a2a/message")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer shared-secret")
+            .body(Body::from(r#"{"message":"hi","sourceAgent":"worker"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a2a_rejects_longer_token_with_valid_prefix() {
+        let mut cfg = test_config_template();
+        cfg.a2a.enabled = true;
+        cfg.a2a.shared_tokens = vec!["shared-secret".into()];
+        let app = build_router(test_web_state_from_app_state(
+            test_state_with_config(Box::new(DummyLlm), cfg),
+            WebLimits::default(),
+        ));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/a2a/message")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer shared-secret-extra-suffix")
+            .body(Body::from(r#"{"message":"hi","sourceAgent":"worker"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn a2a_rejects_when_no_target_user() {
         let mut cfg = test_config_template();
         cfg.a2a.enabled = true;
