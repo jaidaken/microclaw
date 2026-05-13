@@ -59,7 +59,7 @@ pub fn cache_key(tool_name: &str, input: &serde_json::Value) -> String {
     hasher.update(tool_name.as_bytes());
     hasher.update(b":");
     hasher.update(canonical.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]

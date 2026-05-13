@@ -38,12 +38,12 @@ microclaw-channels = { version = "0.1.0", path = "crates/microclaw-channels" }
 microclaw-app = { version = "0.1.0", path = "crates/microclaw-app" }
 microclaw-observability = { version = "0.1.0", path = "crates/microclaw-observability" }
 teloxide = { version = "0.17", features = ["macros"] }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 tokio-native-tls = "0.3"
 native-tls = "0.2"
-reqwest = { version = "0.12", features = ["json", "blocking"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "http2", "json", "blocking"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -53,21 +53,23 @@ regex = "1"
 thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
-agent-client-protocol = "0.10.3"
-uuid = { version = "1", features = ["v4"] }
+agent-client-protocol = "0.11.1"
+agent-client-protocol-tokio = "0.11.1"
+uuid = { version = "1.23.1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde_yaml = "0.9"
-cron = "0.15"
+cron = "0.16"
 urlencoding = "2"
 base64 = "0.22"
-aes = "0.8"
-ecb = { version = "0.1", features = ["alloc"] }
+aes = "0.9"
+ecb = { version = "0.2", features = ["alloc"] }
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
-zip = "2"
-sha2 = "0.10"
-md5 = "0.7"
-axum = { version = "0.7", features = ["ws"] }
+zip = "8"
+sha2 = "0.11"
+hex = "0.4"
+md5 = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "cache", "native_tls_backend"] }
@@ -75,15 +77,15 @@ include_dir = "0.7"
 async-stream = "0.3"
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["compat"] }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 argon2 = "0.5"
-opentelemetry-proto = { version = "0.28", features = ["gen-tonic-messages"] }
-opentelemetry-semantic-conventions = { version = "0.30", features = ["semconv_experimental"] }
-prost = "0.13"
-clap = { version = "4.6", features = ["derive"] }
+opentelemetry-proto = { version = "0.32", features = ["gen-tonic-messages"] }
+opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_experimental"] }
+prost = "0.14"
+clap = { version = "4.6.1", features = ["derive"] }
 http = "1"
-rmcp = { version = "1.3", features = [
+rmcp = { version = "1.6", features = [
     "client",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",
@@ -96,4 +98,4 @@ yaml-edit = "0.2.0"
 tower = "0.5"
 
 [target.'cfg(windows)'.dependencies]
-windows-service = "0.8.0"
+windows-service = "0.8.1"

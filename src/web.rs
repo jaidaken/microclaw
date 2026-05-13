@@ -2009,7 +2009,7 @@ fn build_router(web_state: WebState) -> Router {
     Router::new()
         .route("/", get(index_or_ws))
         .route("/health", get(api_health_root))
-        .route("/assets/*file", get(asset_file))
+        .route("/assets/{*file}", get(asset_file))
         .route("/icon.png", get(icon_file))
         .route("/favicon.ico", get(favicon_file))
         .route("/api/health", get(api_health))
@@ -2023,11 +2023,11 @@ fn build_router(web_state: WebState) -> Router {
             get(auth::api_auth_api_keys).post(auth::api_auth_create_api_key),
         )
         .route(
-            "/api/auth/api_keys/:id",
+            "/api/auth/api_keys/{id}",
             axum::routing::delete(auth::api_auth_revoke_api_key),
         )
         .route(
-            "/api/auth/api_keys/:id/rotate",
+            "/api/auth/api_keys/{id}/rotate",
             post(auth::api_auth_rotate_api_key),
         )
         .route(
@@ -2064,8 +2064,8 @@ fn build_router(web_state: WebState) -> Router {
         .route("/api/reset", post(sessions::api_reset))
         .route("/api/delete_session", post(sessions::api_delete_session))
         .route("/api/skills", get(skills::api_list_skills))
-        .route("/api/skills/:name/enable", post(skills::api_enable_skill))
-        .route("/api/skills/:name/disable", post(skills::api_disable_skill))
+        .route("/api/skills/{name}/enable", post(skills::api_enable_skill))
+        .route("/api/skills/{name}/disable", post(skills::api_disable_skill))
         .with_state(web_state)
 }
 
@@ -4489,7 +4489,7 @@ commands:
                     "auth": { "token": "ws-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4520,7 +4520,7 @@ commands:
                     "idempotencyKey": "idem-ws-1"
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4586,7 +4586,7 @@ commands:
                     "auth": { "token": "ws-secret-2" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4603,7 +4603,7 @@ commands:
                     "idempotencyKey": "idem-ws-2"
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4625,7 +4625,7 @@ commands:
                     "limit": 10
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4680,7 +4680,7 @@ commands:
                     "auth": { "token": "ws-meta-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4699,7 +4699,7 @@ commands:
                     "method": method,
                     "params": {}
                 })
-                .to_string(),
+                .to_string().into(),
             ))
             .await
             .unwrap();
@@ -4757,7 +4757,7 @@ commands:
                     "auth": { "token": "ws-session-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4788,7 +4788,7 @@ commands:
                     "method": method,
                     "params": params
                 })
-                .to_string(),
+                .to_string().into(),
             ))
             .await
             .unwrap();
@@ -4888,7 +4888,7 @@ commands:
                     "auth": { "token": "ws-list-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4903,7 +4903,7 @@ commands:
                     "agentId": "chatclaw:microclaw"
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4949,7 +4949,7 @@ commands:
                     "search": "123"
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -4987,7 +4987,7 @@ commands:
                 "method": "sessions.list",
                 "params": {}
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5036,7 +5036,7 @@ commands:
                     "auth": { "token": "ws-legacy-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5062,7 +5062,7 @@ commands:
                     "method": method,
                     "params": params
                 })
-                .to_string(),
+                .to_string().into(),
             ))
             .await
             .unwrap();
@@ -5174,7 +5174,7 @@ commands:
                     "auth": { "token": "ws-settings-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5199,7 +5199,7 @@ commands:
                     "method": method,
                     "params": params
                 })
-                .to_string(),
+                .to_string().into(),
             ))
             .await
             .unwrap();
@@ -5320,7 +5320,7 @@ commands:
                     "auth": { "token": "ws-kill-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5332,7 +5332,7 @@ commands:
                 "method": "sessions.kill",
                 "params": { "key": session_key }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5412,7 +5412,7 @@ commands:
                     "auth": { "token": "bad-token" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5453,7 +5453,7 @@ commands:
                     "auth": { "token": "ws-root-secret" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5495,7 +5495,7 @@ commands:
                     "auth": { "token": "ws-secret-readless" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();
@@ -5532,7 +5532,7 @@ commands:
                     "auth": { "token": "ws-secret-3" }
                 }
             })
-            .to_string(),
+            .to_string().into(),
         ))
         .await
         .unwrap();

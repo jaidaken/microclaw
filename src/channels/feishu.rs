@@ -2217,7 +2217,7 @@ async fn run_ws_connection(
             };
             let data = ping_frame.encode();
             let mut w = ping_write.lock().await;
-            if let Err(e) = w.send(WsMessage::Binary(data)).await {
+            if let Err(e) = w.send(WsMessage::Binary(data.into())).await {
                 warn!("Feishu WS: ping send failed: {e}");
                 break;
             }
@@ -2327,7 +2327,7 @@ async fn send_ack(write: &WsSink, request_frame: &pb::Frame) {
     };
     let data = ack_frame.encode();
     let mut w = write.lock().await;
-    if let Err(e) = w.send(WsMessage::Binary(data)).await {
+    if let Err(e) = w.send(WsMessage::Binary(data.into())).await {
         warn!("Feishu WS: failed to send ACK: {e}");
     }
 }

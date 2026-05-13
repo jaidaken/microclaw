@@ -112,7 +112,7 @@ fn hash_str(s: &str) -> String {
     hasher.update(s.as_bytes());
     let digest = hasher.finalize();
     // First 16 hex chars are plenty for collision resistance within a turn.
-    format!("{:x}", digest)[..16].to_string()
+    hex::encode(digest)[..16].to_string()
 }
 
 #[cfg(test)]

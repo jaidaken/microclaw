@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyInit};
 use aes::{Aes128, Aes192, Aes256};
+use ecb::cipher::{block_padding::Pkcs7, BlockModeDecrypt, BlockModeEncrypt, KeyInit};
 use axum::http::HeaderMap;
 use axum::{Json, Router};
 use base64::Engine as _;
@@ -700,7 +700,7 @@ fn aes_ecb_padded_size(plaintext_size: usize) -> usize {
 fn encrypt_aes_ecb(plaintext: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = EcbEncryptor::<Aes128>::new_from_slice(key)
         .map_err(|e| format!("Failed to initialize AES-128-ECB cipher: {e}"))?;
-    Ok(cipher.encrypt_padded_vec_mut::<Pkcs7>(plaintext))
+    Ok(cipher.encrypt_padded_vec::<Pkcs7>(plaintext))
 }
 
 fn decrypt_aes_ecb(ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
@@ -709,21 +709,21 @@ fn decrypt_aes_ecb(ciphertext: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
             let cipher = EcbDecryptor::<Aes128>::new_from_slice(key)
                 .map_err(|e| format!("Failed to initialize AES-128-ECB decryptor: {e}"))?;
             cipher
-                .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
                 .map_err(|e| format!("Failed to decrypt AES-128-ECB payload: {e}"))
         }
         24 => {
             let cipher = EcbDecryptor::<Aes192>::new_from_slice(key)
                 .map_err(|e| format!("Failed to initialize AES-192-ECB decryptor: {e}"))?;
             cipher
-                .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
                 .map_err(|e| format!("Failed to decrypt AES-192-ECB payload: {e}"))
         }
         32 => {
             let cipher = EcbDecryptor::<Aes256>::new_from_slice(key)
                 .map_err(|e| format!("Failed to initialize AES-256-ECB decryptor: {e}"))?;
             cipher
-                .decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
                 .map_err(|e| format!("Failed to decrypt AES-256-ECB payload: {e}"))
         }
         other => Err(format!("Unsupported AES key length: {other}")),

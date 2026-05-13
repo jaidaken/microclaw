@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,13 +12,59 @@ use opentelemetry_otlp::{Protocol, WithExportConfig, WithHttpConfig};
 use opentelemetry_proto::tonic::trace::v1::Status;
 use opentelemetry_sdk::runtime;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
-use opentelemetry_sdk::trace::{BatchConfigBuilder, SdkTracerProvider, Tracer as SdkTracer};
+use opentelemetry_sdk::trace::{
+    BatchConfigBuilder, IdGenerator, RandomIdGenerator, SdkTracerProvider, Tracer as SdkTracer,
+};
 use serde_yaml::Value as YamlValue;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::adapters;
 use crate::sdk::{get_bool, get_trimmed, get_u64, parse_headers, OTelSdkContext};
+
+// opentelemetry 0.32 PR #3227 removed SpanBuilder::with_trace_id/_span_id
+// (spec compliance: IdGenerator is the only sanctioned path). This generator
+// preserves upstream OTLP ids when re-exporting, falls back to random.
+thread_local! {
+    static PASSTHROUGH_NEXT: RefCell<Option<(TraceId, SpanId)>> = const { RefCell::new(None) };
+}
+
+#[derive(Debug, Default)]
+pub struct PassthroughIdGenerator {
+    fallback: RandomIdGenerator,
+}
+
+impl IdGenerator for PassthroughIdGenerator {
+    fn new_trace_id(&self) -> TraceId {
+        let pulled = PASSTHROUGH_NEXT.with(|cell| cell.borrow_mut().take());
+        if let Some((trace_id, span_id)) = pulled {
+            PASSTHROUGH_NEXT.with(|cell| {
+                *cell.borrow_mut() = Some((TraceId::INVALID, span_id));
+            });
+            trace_id
+        } else {
+            self.fallback.new_trace_id()
+        }
+    }
+
+    fn new_span_id(&self) -> SpanId {
+        let pulled = PASSTHROUGH_NEXT.with(|cell| cell.borrow_mut().take());
+        if let Some((_, span_id)) = pulled {
+            span_id
+        } else {
+            self.fallback.new_span_id()
+        }
+    }
+}
+
+fn with_forced_ids<R>(trace_id: TraceId, span_id: SpanId, f: impl FnOnce() -> R) -> R {
+    PASSTHROUGH_NEXT.with(|cell| {
+        *cell.borrow_mut() = Some((trace_id, span_id));
+    });
+    let out = f();
+    PASSTHROUGH_NEXT.with(|cell| cell.borrow_mut().take());
+    out
+}
 
 #[derive(Debug, Clone)]
 pub struct SpanData {
@@ -121,6 +168,7 @@ impl OtlpTraceExporter {
             .build();
         let provider = SdkTracerProvider::builder()
             .with_resource(sdk.resource)
+            .with_id_generator(PassthroughIdGenerator::default())
             .with_span_processor(batch_processor)
             .build();
         let tracer = provider.tracer("microclaw.observability.traces");
@@ -152,37 +200,47 @@ impl OtlpTraceExporter {
             status,
             ..
         } = span;
-        let mut builder = self
-            .tracer
-            .span_builder(name)
-            .with_kind(to_span_kind(kind))
-            .with_start_time(unix_nano_to_time(start_time_unix_nano))
-            .with_attributes(attributes);
-        if trace_id.len() == 16 {
-            if let Ok(bytes) = trace_id.as_slice().try_into() {
-                builder = builder.with_trace_id(TraceId::from_bytes(bytes));
-            }
+        let forced_trace_id = if trace_id.len() == 16 {
+            trace_id
+                .as_slice()
+                .try_into()
+                .ok()
+                .map(TraceId::from_bytes)
         } else {
             warn!(
                 trace_id_len = trace_id.len(),
                 "invalid trace_id length, expected 16 bytes"
             );
-        }
-        if span_id.len() == 8 {
-            if let Ok(bytes) = span_id.as_slice().try_into() {
-                builder = builder.with_span_id(SpanId::from_bytes(bytes));
-            }
+            None
+        };
+        let forced_span_id = if span_id.len() == 8 {
+            span_id.as_slice().try_into().ok().map(SpanId::from_bytes)
         } else {
             warn!(
                 span_id_len = span_id.len(),
                 "invalid span_id length, expected 8 bytes"
             );
-        }
+            None
+        };
 
-        let mut sdk_span = if let Some(parent) = parent {
-            builder.start_with_context(&self.tracer, &parent)
-        } else {
-            builder.start(&self.tracer)
+        let builder = self
+            .tracer
+            .span_builder(name)
+            .with_kind(to_span_kind(kind))
+            .with_start_time(unix_nano_to_time(start_time_unix_nano))
+            .with_attributes(attributes);
+
+        let start_span = || -> opentelemetry_sdk::trace::Span {
+            if let Some(parent) = parent.as_ref() {
+                builder.start_with_context(&self.tracer, parent)
+            } else {
+                builder.start(&self.tracer)
+            }
+        };
+
+        let mut sdk_span = match (forced_trace_id, forced_span_id) {
+            (Some(t), Some(s)) => with_forced_ids(t, s, start_span),
+            _ => start_span(),
         };
 
         if let Some(status) = status {

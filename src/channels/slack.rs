@@ -970,7 +970,7 @@ async fn run_socket_mode(
                 // Acknowledge the envelope immediately
                 if let Some(envelope_id) = envelope.get("envelope_id").and_then(|v| v.as_str()) {
                     let ack = serde_json::json!({ "envelope_id": envelope_id });
-                    if let Err(e) = write.send(WsMessage::Text(ack.to_string())).await {
+                    if let Err(e) = write.send(WsMessage::Text(ack.to_string().into())).await {
                         warn!("Slack: failed to send ack: {e}");
                     }
                 }

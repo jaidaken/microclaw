@@ -115,7 +115,7 @@ pub async fn install_skill(
     let bytes = client.download_skill(slug, &actual_version).await?;
 
     // 7. Verify hash (if provided)
-    let hash = format!("sha256:{:x}", Sha256::digest(&bytes));
+    let hash = format!("sha256:{}", hex::encode(Sha256::digest(&bytes)));
 
     // 8. Extract
     if skill_path.exists() && options.force {

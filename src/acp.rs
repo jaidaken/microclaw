@@ -9,13 +9,14 @@ use crate::memory_backend::{MemoryBackend, MemoryMcpClient};
 use crate::runtime::AppState;
 use crate::skills::SkillManager;
 use crate::tools::ToolRegistry;
-use agent_client_protocol::{
-    Agent, AgentCapabilities, AgentSideConnection, AuthenticateRequest, AuthenticateResponse,
-    AvailableCommand, AvailableCommandsUpdate, CancelNotification, Client, ContentBlock,
-    ContentChunk, CurrentModeUpdate, Error, Implementation, InitializeRequest, InitializeResponse,
-    LoadSessionRequest, LoadSessionResponse, McpCapabilities, NewSessionRequest,
-    NewSessionResponse, PromptCapabilities, PromptRequest, PromptResponse, Result as AcpResult,
-    SessionId, SessionMode, SessionModeState, SessionUpdate, SetSessionModeRequest,
+use agent_client_protocol as acp;
+use agent_client_protocol::schema::{
+    AgentCapabilities, AuthenticateRequest, AuthenticateResponse, AvailableCommand,
+    AvailableCommandsUpdate, CancelNotification, ContentBlock, ContentChunk, CurrentModeUpdate,
+    Error as AcpError, Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest,
+    LoadSessionResponse, McpCapabilities, NewSessionRequest, NewSessionResponse,
+    PromptCapabilities, PromptRequest, PromptResponse, Result as AcpResult, SessionId, SessionMode,
+    SessionModeState, SessionNotification, SessionUpdate, SetSessionModeRequest,
     SetSessionModeResponse, StopReason,
 };
 use microclaw_channels::channel::ConversationKind;
@@ -25,7 +26,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tracing::warn;
 
 const ACP_CHANNEL: &str = "acp";
@@ -51,13 +51,12 @@ pub async fn serve(
         MemoryMcpClient::discover(&mcp_manager),
         &config.data_dir,
     ));
-    let tools = ToolRegistry::new(
+    let mut tools = ToolRegistry::new(
         &config,
         channel_registry.clone(),
         db.clone(),
         memory_backend.clone(),
     );
-    let mut tools = tools;
     for (server, tool_info) in mcp_manager.all_tools() {
         tools.add_tool(Box::new(crate::tools::mcp::McpTool::new(server, tool_info)));
     }
@@ -92,49 +91,109 @@ pub async fn serve(
     {
         let review_state = app_state.clone();
         tokio::spawn(async move {
-            crate::skill_review::spawn_skill_review_worker(review_state, skill_review_worker)
-                .await;
+            crate::skill_review::spawn_skill_review_worker(review_state, skill_review_worker).await;
         });
     }
 
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async move {
-            let stdin = tokio::io::stdin().compat();
-            let stdout = tokio::io::stdout().compat_write();
-            let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<OutboundNotification>();
-            let agent = MicroClawAcpAgent::new(app_state, outbound_tx);
-            let (client, io) = AgentSideConnection::new(agent, stdout, stdin, |fut| {
-                tokio::task::spawn_local(fut);
-            });
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<SessionNotification>();
+    let agent = Arc::new(MicroClawAcpAgent::new(app_state, outbound_tx));
 
-            let notify_task = tokio::task::spawn_local(async move {
-                while let Some(notification) = outbound_rx.recv().await {
-                    if let Err(err) = client.session_notification(notification.into()).await {
-                        warn!("ACP session update failed: {err}");
-                        break;
-                    }
+    let h_init = agent.clone();
+    let h_auth = agent.clone();
+    let h_new = agent.clone();
+    let h_load = agent.clone();
+    let h_mode = agent.clone();
+    let h_prompt = agent.clone();
+    let h_cancel = agent.clone();
+
+    acp::Agent
+        .builder()
+        .name("microclaw")
+        .on_receive_request(
+            async move |req: InitializeRequest, responder, _cx| {
+                match h_init.initialize(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
                 }
-            });
-
-            let io_result = io.await;
-            notify_task.abort();
-            io_result.map_err(|err| anyhow::anyhow!("ACP transport failed: {err}"))
-        })
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: AuthenticateRequest, responder, _cx| {
+                match h_auth.authenticate(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: NewSessionRequest, responder, _cx| {
+                match h_new.new_session(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: LoadSessionRequest, responder, _cx| {
+                match h_load.load_session(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: SetSessionModeRequest, responder, _cx| {
+                match h_mode.set_session_mode(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: PromptRequest, responder, _cx| {
+                match h_prompt.prompt(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_notification(
+            async move |notification: CancelNotification, _cx| {
+                if let Err(err) = h_cancel.cancel(notification).await {
+                    warn!("ACP cancel notification handler failed: {err:?}");
+                }
+                Ok::<_, AcpError>(())
+            },
+            acp::on_receive_notification!(),
+        )
+        .connect_to(agent_client_protocol_tokio::Stdio::new())
         .await
+        .map_err(|err| anyhow::anyhow!("ACP transport failed: {err}"))?;
+
+    // The connection above drives the loop; outbound_rx drained by the
+    // notification forwarder task spawned below would deadlock if the
+    // connection ended first. Drain remaining notifications best-effort.
+    while outbound_rx.try_recv().is_ok() {}
+    Ok(())
 }
 
 #[derive(Clone)]
 struct MicroClawAcpAgent {
     app_state: Arc<AppState>,
-    outbound_tx: mpsc::UnboundedSender<OutboundNotification>,
+    outbound_tx: mpsc::UnboundedSender<SessionNotification>,
     sessions: Arc<RwLock<HashMap<String, SessionState>>>,
 }
 
 impl MicroClawAcpAgent {
     fn new(
         app_state: Arc<AppState>,
-        outbound_tx: mpsc::UnboundedSender<OutboundNotification>,
+        outbound_tx: mpsc::UnboundedSender<SessionNotification>,
     ) -> Self {
         Self {
             app_state,
@@ -188,8 +247,8 @@ impl MicroClawAcpAgent {
 
     fn send_update(&self, session_id: SessionId, update: SessionUpdate) -> AcpResult<()> {
         self.outbound_tx
-            .send(OutboundNotification { session_id, update })
-            .map_err(|_| Error::internal_error())
+            .send(SessionNotification::new(session_id, update))
+            .map_err(|_| AcpError::internal_error())
     }
 
     async fn store_message(
@@ -213,10 +272,7 @@ impl MicroClawAcpAgent {
         .await?;
         Ok(())
     }
-}
 
-#[async_trait::async_trait(?Send)]
-impl Agent for MicroClawAcpAgent {
     async fn initialize(&self, args: InitializeRequest) -> AcpResult<InitializeResponse> {
         Ok(InitializeResponse::new(args.protocol_version)
             .agent_info(
@@ -283,7 +339,7 @@ impl Agent for MicroClawAcpAgent {
             .map_err(to_acp_error)?;
         let prompt_text = flatten_prompt(&args.prompt);
         if prompt_text.trim().is_empty() {
-            return Err(Error::invalid_params());
+            return Err(AcpError::invalid_params());
         }
 
         self.store_message(chat_id, "acp-user", prompt_text.clone(), false)
@@ -309,10 +365,10 @@ impl Agent for MicroClawAcpAgent {
         let forward_task = tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 if let AgentEvent::TextDelta { delta } = event {
-                    let _ = outbound_tx.send(OutboundNotification {
-                        session_id: session_id.clone(),
-                        update: SessionUpdate::AgentMessageChunk(ContentChunk::new(delta.into())),
-                    });
+                    let _ = outbound_tx.send(SessionNotification::new(
+                        session_id.clone(),
+                        SessionUpdate::AgentMessageChunk(ContentChunk::new(delta.into())),
+                    ));
                 }
             }
         });
@@ -358,17 +414,6 @@ impl Agent for MicroClawAcpAgent {
 #[derive(Clone)]
 struct SessionState {
     cwd: PathBuf,
-}
-
-struct OutboundNotification {
-    session_id: SessionId,
-    update: SessionUpdate,
-}
-
-impl From<OutboundNotification> for agent_client_protocol::SessionNotification {
-    fn from(value: OutboundNotification) -> Self {
-        agent_client_protocol::SessionNotification::new(value.session_id, value.update)
-    }
 }
 
 struct AcpAdapter;
@@ -437,10 +482,10 @@ fn flatten_prompt(blocks: &[ContentBlock]) -> String {
                 parts.push(format!("Resource: {} ({})", link.name, link.uri));
             }
             ContentBlock::Resource(resource) => match &resource.resource {
-                agent_client_protocol::EmbeddedResourceResource::TextResourceContents(text) => {
+                acp::schema::EmbeddedResourceResource::TextResourceContents(text) => {
                     parts.push(format!("Embedded resource {}:\n{}", text.uri, text.text));
                 }
-                agent_client_protocol::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                acp::schema::EmbeddedResourceResource::BlobResourceContents(blob) => {
                     parts.push(format!(
                         "Embedded resource {} ({} bytes, binary content omitted)",
                         blob.uri,
@@ -461,8 +506,8 @@ fn flatten_prompt(blocks: &[ContentBlock]) -> String {
     parts.join("\n\n")
 }
 
-fn to_acp_error(err: impl std::fmt::Display) -> Error {
-    let mut error = Error::internal_error();
+fn to_acp_error(err: impl std::fmt::Display) -> AcpError {
+    let mut error = AcpError::internal_error();
     error.message = err.to_string();
     error
 }
@@ -470,7 +515,7 @@ fn to_acp_error(err: impl std::fmt::Display) -> Error {
 #[cfg(test)]
 mod tests {
     use super::flatten_prompt;
-    use agent_client_protocol::{
+    use agent_client_protocol::schema::{
         BlobResourceContents, ContentBlock, EmbeddedResource, EmbeddedResourceResource,
         ResourceLink, TextResourceContents,
     };

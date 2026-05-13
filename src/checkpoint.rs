@@ -62,7 +62,7 @@ pub fn shadow_repo_path(checkpoints_root: &Path, working_dir: &Path) -> PathBuf 
     let mut hasher = Sha256::new();
     hasher.update(canonical.to_string_lossy().as_bytes());
     let h = hasher.finalize();
-    let dir_hash = format!("{:x}", h)[..16].to_string();
+    let dir_hash = hex::encode(h)[..16].to_string();
     checkpoints_root.join(dir_hash)
 }
 

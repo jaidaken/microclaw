@@ -3990,7 +3990,8 @@ impl Database {
         max_entries: usize,
     ) -> Result<usize, MicroClawError> {
         let conn = self.lock_conn();
-        let count: usize = if let Some(cid) = chat_id {
+        // rusqlite 0.39 dropped usize: FromSql/ToSql, sqlite is i64 native.
+        let count: i64 = if let Some(cid) = chat_id {
             conn.query_row(
                 "SELECT COUNT(*) FROM memories WHERE is_archived = 0 AND chat_id = ?1",
                 params![cid],
@@ -4003,10 +4004,11 @@ impl Database {
                 |row| row.get(0),
             )?
         };
-        if count <= max_entries {
+        let max_entries_i64 = max_entries as i64;
+        if count <= max_entries_i64 {
             return Ok(0);
         }
-        let excess = count - max_entries;
+        let excess: i64 = count - max_entries_i64;
         let now = chrono::Utc::now().to_rfc3339();
         let rows = if let Some(cid) = chat_id {
             conn.execute(
@@ -4261,16 +4263,18 @@ impl Database {
     /// Get knowledge graph stats (total triples, active, invalidated).
     pub fn kg_stats(&self, chat_id: Option<i64>) -> Result<(usize, usize, usize), MicroClawError> {
         let conn = self.lock_conn();
-        let total: usize = conn.query_row(
+        let total: i64 = conn.query_row(
             "SELECT COUNT(*) FROM knowledge_graph WHERE (?1 IS NULL OR chat_id = ?1 OR chat_id IS NULL)",
             params![chat_id],
             |row| row.get(0),
         )?;
-        let active: usize = conn.query_row(
+        let active: i64 = conn.query_row(
             "SELECT COUNT(*) FROM knowledge_graph WHERE valid_to IS NULL AND (?1 IS NULL OR chat_id = ?1 OR chat_id IS NULL)",
             params![chat_id],
             |row| row.get(0),
         )?;
+        let total = total.max(0) as usize;
+        let active = active.max(0) as usize;
         Ok((total, active, total.saturating_sub(active)))
     }
 
@@ -4282,16 +4286,16 @@ impl Database {
         max_triples: usize,
     ) -> Result<usize, MicroClawError> {
         let conn = self.lock_conn();
-        let count: usize = conn.query_row(
+        let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM knowledge_graph WHERE chat_id = ?1",
             params![chat_id],
             |row| row.get(0),
         )?;
-        if count <= max_triples {
+        let max_triples_i64 = max_triples as i64;
+        if count <= max_triples_i64 {
             return Ok(0);
         }
-        let excess = count - max_triples;
-        // First: delete invalidated triples (oldest first)
+        let excess: i64 = count - max_triples_i64;
         let deleted_invalidated = conn.execute(
             "DELETE FROM knowledge_graph WHERE id IN (
                 SELECT id FROM knowledge_graph
@@ -4301,7 +4305,7 @@ impl Database {
             )",
             params![chat_id, excess],
         )?;
-        let remaining_excess = excess.saturating_sub(deleted_invalidated);
+        let remaining_excess = (excess as usize).saturating_sub(deleted_invalidated);
         if remaining_excess == 0 {
             return Ok(deleted_invalidated);
         }
@@ -4313,7 +4317,7 @@ impl Database {
                 ORDER BY confidence ASC, created_at ASC
                 LIMIT ?2
             )",
-            params![chat_id, remaining_excess],
+            params![chat_id, remaining_excess as i64],
         )?;
         Ok(deleted_invalidated + deleted_active)
     }

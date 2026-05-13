@@ -104,6 +104,8 @@ fn minimal_config() -> Config {
         checkpoints_enabled: false,
         skill_archive_after_days: 30,
         skills_catalog_top_k: 3,
+        bash_hard_deny_patterns: Vec::new(),
+        disabled_tools: Vec::new(),
     }
 }
 

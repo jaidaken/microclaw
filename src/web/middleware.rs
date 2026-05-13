@@ -58,7 +58,7 @@ pub(super) fn bootstrap_token_from_headers(headers: &HeaderMap) -> Option<String
 pub(super) fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 pub(super) fn parse_cookie(headers: &HeaderMap, name: &str) -> Option<String> {

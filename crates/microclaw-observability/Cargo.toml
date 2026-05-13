@@ -6,13 +6,13 @@ license = "MIT"
 
 [dependencies]
 base64 = "0.22"
-opentelemetry = "0.30"
-opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "experimental_async_runtime", "experimental_trace_batch_span_processor_with_async_runtime", "experimental_logs_batch_log_processor_with_async_runtime", "experimental_metrics_periodicreader_with_async_runtime"] }
-opentelemetry-otlp = { version = "0.30", features = ["http-proto", "trace", "metrics", "logs", "reqwest-client"] }
-opentelemetry-proto = { version = "0.28", features = ["gen-tonic-messages"] }
-prost = "0.13"
-reqwest = { version = "0.12", features = ["json", "blocking"] }
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio", "experimental_async_runtime", "experimental_trace_batch_span_processor_with_async_runtime", "experimental_logs_batch_log_processor_with_async_runtime", "experimental_metrics_periodicreader_with_async_runtime"] }
+opentelemetry-otlp = { version = "0.32", features = ["http-proto", "trace", "metrics", "logs", "reqwest-client"] }
+opentelemetry-proto = { version = "0.32", features = ["gen-tonic-messages"] }
+prost = "0.14"
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "http2", "json", "blocking"] }
 serde_yaml = "0.9"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.52", features = ["full"] }
 tracing = "0.1"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1.23.1", features = ["v4"] }

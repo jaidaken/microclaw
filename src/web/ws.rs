@@ -1562,7 +1562,7 @@ async fn send_json<T: Serialize>(sender: &SharedSender, value: &T) -> Result<(),
     sender
         .lock()
         .await
-        .send(Message::Text(text))
+        .send(Message::Text(text.into()))
         .await
         .map_err(|err| {
             if is_expected_closed_socket_error(&err.to_string()) {

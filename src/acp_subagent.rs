@@ -4,12 +4,17 @@ use std::process::Stdio;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use agent_client_protocol::{
-    self as acp, Agent as _, Client, ClientCapabilities, ClientSideConnection,
-    FileSystemCapabilities, InitializeRequest, ProtocolVersion, RequestPermissionOutcome,
-    SelectedPermissionOutcome,
+use agent_client_protocol::{self as acp, ByteStreams, Client};
+use agent_client_protocol::schema::{
+    self, CancelNotification, ClientCapabilities, CreateTerminalRequest, CreateTerminalResponse,
+    FileSystemCapabilities, Implementation, InitializeRequest, KillTerminalRequest,
+    KillTerminalResponse, NewSessionRequest, PermissionOptionKind, PromptRequest,
+    ReadTextFileRequest, ReadTextFileResponse, ReleaseTerminalRequest, ReleaseTerminalResponse,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SelectedPermissionOutcome, SessionUpdate, TerminalExitStatus, TerminalOutputRequest,
+    TerminalOutputResponse, WaitForTerminalExitRequest, WaitForTerminalExitResponse,
+    WriteTextFileRequest, WriteTextFileResponse,
 };
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
@@ -51,20 +56,20 @@ struct TranscriptState {
 struct TerminalSession {
     child: Mutex<tokio::process::Child>,
     output: Arc<Mutex<RetainedText>>,
-    exit_status: Mutex<Option<acp::TerminalExitStatus>>,
+    exit_status: Mutex<Option<TerminalExitStatus>>,
 }
 
 impl TerminalSession {
-    async fn output_response(&self) -> Result<acp::TerminalOutputResponse, acp::Error> {
+    async fn output_response(&self) -> Result<TerminalOutputResponse, acp::Error> {
         let exit_status = self.try_refresh_exit_status().await?;
         let output = self.output.lock().await;
         Ok(
-            acp::TerminalOutputResponse::new(output.text.clone(), output.truncated)
+            TerminalOutputResponse::new(output.text.clone(), output.truncated)
                 .exit_status(exit_status),
         )
     }
 
-    async fn try_refresh_exit_status(&self) -> Result<Option<acp::TerminalExitStatus>, acp::Error> {
+    async fn try_refresh_exit_status(&self) -> Result<Option<TerminalExitStatus>, acp::Error> {
         if let Some(existing) = self.exit_status.lock().await.clone() {
             return Ok(Some(existing));
         }
@@ -81,9 +86,9 @@ impl TerminalSession {
         }
     }
 
-    async fn wait_for_exit(&self) -> Result<acp::WaitForTerminalExitResponse, acp::Error> {
+    async fn wait_for_exit(&self) -> Result<WaitForTerminalExitResponse, acp::Error> {
         if let Some(existing) = self.exit_status.lock().await.clone() {
-            return Ok(acp::WaitForTerminalExitResponse::new(existing));
+            return Ok(WaitForTerminalExitResponse::new(existing));
         }
         let status = {
             let mut child = self.child.lock().await;
@@ -91,7 +96,7 @@ impl TerminalSession {
         };
         let mapped = map_exit_status(status);
         *self.exit_status.lock().await = Some(mapped.clone());
-        Ok(acp::WaitForTerminalExitResponse::new(mapped))
+        Ok(WaitForTerminalExitResponse::new(mapped))
     }
 
     async fn kill(&self) -> Result<(), acp::Error> {
@@ -171,14 +176,11 @@ impl AcpSessionClient {
         })
         .await;
     }
-}
 
-#[async_trait(?Send)]
-impl Client for AcpSessionClient {
     async fn request_permission(
         &self,
-        args: acp::RequestPermissionRequest,
-    ) -> Result<acp::RequestPermissionResponse, acp::Error> {
+        args: RequestPermissionRequest,
+    ) -> Result<RequestPermissionResponse, acp::Error> {
         let title = args
             .tool_call
             .fields
@@ -196,8 +198,7 @@ impl Client for AcpSessionClient {
                 .find(|opt| {
                     matches!(
                         opt.kind,
-                        acp::PermissionOptionKind::AllowOnce
-                            | acp::PermissionOptionKind::AllowAlways
+                        PermissionOptionKind::AllowOnce | PermissionOptionKind::AllowAlways
                     )
                 })
                 .or_else(|| args.options.first())
@@ -205,13 +206,13 @@ impl Client for AcpSessionClient {
             args.options.iter().find(|opt| {
                 matches!(
                     opt.kind,
-                    acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways
+                    PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways
                 )
             })
         };
 
         let Some(selected) = preferred else {
-            return Ok(acp::RequestPermissionResponse::new(
+            return Ok(RequestPermissionResponse::new(
                 RequestPermissionOutcome::Cancelled,
             ));
         };
@@ -221,17 +222,17 @@ impl Client for AcpSessionClient {
         )
         .await;
 
-        Ok(acp::RequestPermissionResponse::new(
+        Ok(RequestPermissionResponse::new(
             RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
                 selected.option_id.clone(),
             )),
         ))
     }
 
-    async fn session_notification(&self, args: acp::SessionNotification) -> Result<(), acp::Error> {
+    async fn session_notification(&self, args: schema::SessionNotification) {
         match args.update {
-            acp::SessionUpdate::AgentMessageChunk(chunk) => {
-                if let acp::ContentBlock::Text(text) = chunk.content {
+            SessionUpdate::AgentMessageChunk(chunk) => {
+                if let schema::ContentBlock::Text(text) = chunk.content {
                     self.transcript
                         .lock()
                         .await
@@ -239,7 +240,7 @@ impl Client for AcpSessionClient {
                         .push_str(&text.text);
                 }
             }
-            acp::SessionUpdate::ToolCall(tool_call) => {
+            SessionUpdate::ToolCall(tool_call) => {
                 let title = if tool_call.title.trim().is_empty() {
                     format!("{:?}", tool_call.kind)
                 } else {
@@ -249,7 +250,7 @@ impl Client for AcpSessionClient {
                 self.log_event("acp_tool_call", Some(format!("title={title}")))
                     .await;
             }
-            acp::SessionUpdate::ToolCallUpdate(update) => {
+            SessionUpdate::ToolCallUpdate(update) => {
                 let title = update
                     .fields
                     .title
@@ -265,7 +266,7 @@ impl Client for AcpSessionClient {
                     .await;
                 }
             }
-            acp::SessionUpdate::Plan(plan) => {
+            SessionUpdate::Plan(plan) => {
                 if !plan.entries.is_empty() {
                     let items = plan
                         .entries
@@ -279,13 +280,12 @@ impl Client for AcpSessionClient {
             }
             _ => {}
         }
-        Ok(())
     }
 
     async fn write_text_file(
         &self,
-        args: acp::WriteTextFileRequest,
-    ) -> Result<acp::WriteTextFileResponse, acp::Error> {
+        args: WriteTextFileRequest,
+    ) -> Result<WriteTextFileResponse, acp::Error> {
         let path = resolve_client_path(&self.working_dir, &args.path)?;
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -300,13 +300,13 @@ impl Client for AcpSessionClient {
             Some(format!("path={}", args.path.display())),
         )
         .await;
-        Ok(acp::WriteTextFileResponse::new())
+        Ok(WriteTextFileResponse::new())
     }
 
     async fn read_text_file(
         &self,
-        args: acp::ReadTextFileRequest,
-    ) -> Result<acp::ReadTextFileResponse, acp::Error> {
+        args: ReadTextFileRequest,
+    ) -> Result<ReadTextFileResponse, acp::Error> {
         let path = resolve_client_path(&self.working_dir, &args.path)?;
         let content = tokio::fs::read_to_string(path)
             .await
@@ -317,13 +317,13 @@ impl Client for AcpSessionClient {
             Some(format!("path={}", args.path.display())),
         )
         .await;
-        Ok(acp::ReadTextFileResponse::new(selected))
+        Ok(ReadTextFileResponse::new(selected))
     }
 
     async fn create_terminal(
         &self,
-        args: acp::CreateTerminalRequest,
-    ) -> Result<acp::CreateTerminalResponse, acp::Error> {
+        args: CreateTerminalRequest,
+    ) -> Result<CreateTerminalResponse, acp::Error> {
         let cwd = match args.cwd {
             Some(path) => resolve_client_path(&self.working_dir, &path)?,
             None => self.working_dir.clone(),
@@ -377,13 +377,13 @@ impl Client for AcpSessionClient {
             Some(format!("command={} cwd={}", args.command, cwd.display())),
         )
         .await;
-        Ok(acp::CreateTerminalResponse::new(terminal_id))
+        Ok(CreateTerminalResponse::new(terminal_id))
     }
 
     async fn terminal_output(
         &self,
-        args: acp::TerminalOutputRequest,
-    ) -> Result<acp::TerminalOutputResponse, acp::Error> {
+        args: TerminalOutputRequest,
+    ) -> Result<TerminalOutputResponse, acp::Error> {
         let session = self
             .terminals
             .lock()
@@ -396,8 +396,8 @@ impl Client for AcpSessionClient {
 
     async fn release_terminal(
         &self,
-        args: acp::ReleaseTerminalRequest,
-    ) -> Result<acp::ReleaseTerminalResponse, acp::Error> {
+        args: ReleaseTerminalRequest,
+    ) -> Result<ReleaseTerminalResponse, acp::Error> {
         if let Some(session) = self
             .terminals
             .lock()
@@ -411,13 +411,13 @@ impl Client for AcpSessionClient {
             Some(format!("terminal_id={}", args.terminal_id.0)),
         )
         .await;
-        Ok(acp::ReleaseTerminalResponse::new())
+        Ok(ReleaseTerminalResponse::new())
     }
 
     async fn wait_for_terminal_exit(
         &self,
-        args: acp::WaitForTerminalExitRequest,
-    ) -> Result<acp::WaitForTerminalExitResponse, acp::Error> {
+        args: WaitForTerminalExitRequest,
+    ) -> Result<WaitForTerminalExitResponse, acp::Error> {
         let session = self
             .terminals
             .lock()
@@ -436,8 +436,8 @@ impl Client for AcpSessionClient {
 
     async fn kill_terminal(
         &self,
-        args: acp::KillTerminalRequest,
-    ) -> Result<acp::KillTerminalResponse, acp::Error> {
+        args: KillTerminalRequest,
+    ) -> Result<KillTerminalResponse, acp::Error> {
         let session = self
             .terminals
             .lock()
@@ -451,26 +451,11 @@ impl Client for AcpSessionClient {
             Some(format!("terminal_id={}", args.terminal_id.0)),
         )
         .await;
-        Ok(acp::KillTerminalResponse::new())
+        Ok(KillTerminalResponse::new())
     }
 }
 
 pub async fn run_acp_subagent_task(
-    params: AcpSubagentTaskParams,
-) -> Result<(String, String, i64, i64), String> {
-    tokio::task::spawn_blocking(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed creating ACP runtime: {e}"))?;
-        let local = tokio::task::LocalSet::new();
-        runtime.block_on(local.run_until(run_acp_subagent_task_inner(params)))
-    })
-    .await
-    .map_err(|e| format!("ACP runtime join failed: {e}"))?
-}
-
-async fn run_acp_subagent_task_inner(
     params: AcpSubagentTaskParams,
 ) -> Result<(String, String, i64, i64), String> {
     let working_dir = resolve_session_working_dir(&params.config, &params.auth_context)
@@ -484,8 +469,8 @@ async fn run_acp_subagent_task_inner(
         return Err("ACP runtime target command is empty".into());
     }
 
-    let mut child = tokio::process::Command::new(&command);
-    child
+    let mut child_cmd = tokio::process::Command::new(&command);
+    child_cmd
         .args(&params.target.args)
         .current_dir(&working_dir)
         .stdin(Stdio::piped())
@@ -502,13 +487,13 @@ async fn run_acp_subagent_task_inner(
             working_dir.display().to_string(),
         );
     if let Some(target_name) = params.target.name.as_deref() {
-        child.env("MICROCLAW_SUBAGENT_RUNTIME_TARGET", target_name);
+        child_cmd.env("MICROCLAW_SUBAGENT_RUNTIME_TARGET", target_name);
     }
     for (key, value) in &params.target.env {
-        child.env(key, value);
+        child_cmd.env(key, value);
     }
 
-    let mut child = child
+    let mut child = child_cmd
         .spawn()
         .map_err(|e| format!("Failed spawning ACP agent command '{command}': {e}"))?;
     let stdin = child
@@ -541,68 +526,178 @@ async fn run_acp_subagent_task_inner(
         format!("Context: {}\n\nTask: {}", params.context, params.task)
     };
 
+    let transport = ByteStreams::new(stdin.compat_write(), stdout.compat());
     let db = params.db.clone();
     let run_id = params.run_id.clone();
     let local_cancel = params.local_cancel.clone();
-    let (conn, handle_io) = ClientSideConnection::new(
-        client.clone(),
-        stdin.compat_write(),
-        stdout.compat(),
-        |fut| {
-            tokio::task::spawn_local(fut);
-        },
-    );
-    let io_handle = tokio::task::spawn_local(handle_io);
 
-    conn.initialize(
-        InitializeRequest::new(ProtocolVersion::V1)
-            .client_info(
-                acp::Implementation::new("microclaw-acp-client", env!("CARGO_PKG_VERSION"))
-                    .title("MicroClaw ACP Client"),
+    let h_perm = client.clone();
+    let h_write = client.clone();
+    let h_read = client.clone();
+    let h_create = client.clone();
+    let h_out = client.clone();
+    let h_release = client.clone();
+    let h_wait = client.clone();
+    let h_kill = client.clone();
+    let h_notif = client.clone();
+
+    let prompt_client = client.clone();
+    let connection_result = Client
+        .builder()
+        .name("microclaw-acp-subagent")
+        .on_receive_request(
+            async move |req: RequestPermissionRequest, responder, _cx| {
+                match h_perm.request_permission(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: WriteTextFileRequest, responder, _cx| {
+                match h_write.write_text_file(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: ReadTextFileRequest, responder, _cx| {
+                match h_read.read_text_file(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: CreateTerminalRequest, responder, _cx| {
+                match h_create.create_terminal(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: TerminalOutputRequest, responder, _cx| {
+                match h_out.terminal_output(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: ReleaseTerminalRequest, responder, _cx| {
+                match h_release.release_terminal(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: WaitForTerminalExitRequest, responder, _cx| {
+                match h_wait.wait_for_terminal_exit(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: KillTerminalRequest, responder, _cx| {
+                match h_kill.kill_terminal(req).await {
+                    Ok(r) => responder.respond(r),
+                    Err(err) => responder.respond_with_error(err),
+                }
+            },
+            acp::on_receive_request!(),
+        )
+        .on_receive_notification(
+            async move |notif: schema::SessionNotification, _cx| {
+                h_notif.session_notification(notif).await;
+                Ok::<_, acp::Error>(())
+            },
+            acp::on_receive_notification!(),
+        )
+        .connect_with(transport, async move |cx| {
+            cx.send_request(
+                InitializeRequest::new(schema::ProtocolVersion::V1)
+                    .client_info(
+                        Implementation::new(
+                            "microclaw-acp-client",
+                            env!("CARGO_PKG_VERSION"),
+                        )
+                        .title("MicroClaw ACP Client"),
+                    )
+                    .client_capabilities(
+                        ClientCapabilities::new()
+                            .fs(FileSystemCapabilities::new()
+                                .read_text_file(true)
+                                .write_text_file(true))
+                            .terminal(true),
+                    ),
             )
-            .client_capabilities(
-                ClientCapabilities::new()
-                    .fs(FileSystemCapabilities::new()
-                        .read_text_file(true)
-                        .write_text_file(true))
-                    .terminal(true),
-            ),
-    )
-    .await
-    .map_err(|e| format!("ACP initialize failed: {e}"))?;
+            .block_task()
+            .await?;
 
-    let session = conn
-        .new_session(acp::NewSessionRequest::new(working_dir.clone()))
-        .await
-        .map_err(|e| format!("ACP new_session failed: {e}"))?;
-    let session_id = session.session_id.clone();
-    let prompt_future = conn.prompt(acp::PromptRequest::new(
-        session_id.clone(),
-        vec![prompt_text.into()],
-    ));
-    tokio::pin!(prompt_future);
+            let new_session = cx
+                .send_request(NewSessionRequest::new(working_dir.clone()))
+                .block_task()
+                .await?;
+            let session_id = new_session.session_id.clone();
 
-    loop {
-        tokio::select! {
-            prompt_result = &mut prompt_future => {
-                prompt_result.map_err(|e| format!("ACP prompt failed: {e}"))?;
-                break;
-            }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(ACP_CANCEL_POLL_MS)) => {
-                if crate::tools::subagents::is_cancelled(db.clone(), &run_id, &local_cancel).await? {
-                    let _ = conn.cancel(acp::CancelNotification::new(session_id.clone())).await;
-                    client.kill_all_terminals().await;
-                    let _ = terminate_child_process(&mut child).await;
-                    io_handle.abort();
-                    return Err("cancelled".to_string());
+            let prompt_future = cx
+                .send_request(PromptRequest::new(
+                    session_id.clone(),
+                    vec![prompt_text.into()],
+                ))
+                .block_task();
+            tokio::pin!(prompt_future);
+
+            loop {
+                tokio::select! {
+                    res = &mut prompt_future => {
+                        res?;
+                        return Ok(());
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(ACP_CANCEL_POLL_MS)) => {
+                        let cancelled = crate::tools::subagents::is_cancelled(
+                            db.clone(),
+                            &run_id,
+                            &local_cancel,
+                        )
+                        .await
+                        .map_err(internal_error)?;
+                        if cancelled {
+                            let _ = cx.send_notification(CancelNotification::new(session_id.clone()));
+                            prompt_client.kill_all_terminals().await;
+                            let mut err = acp::Error::internal_error();
+                            err.message = "cancelled".to_string();
+                            return Err(err);
+                        }
+                    }
                 }
             }
-        }
-    }
+        })
+        .await;
 
     client.kill_all_terminals().await;
     let _ = terminate_child_process(&mut child).await;
-    io_handle.abort();
+
+    match connection_result {
+        Ok(()) => {}
+        Err(err) => {
+            if err.message == "cancelled" {
+                return Err("cancelled".to_string());
+            }
+            return Err(format!("ACP connection failed: {err}"));
+        }
+    }
 
     let source = client.final_text().await;
     let stderr_text = stderr_capture.lock().await.text.clone();
@@ -740,14 +835,14 @@ fn truncate_retained_text(output: &mut RetainedText, limit: usize) {
     output.text.replace_range(..boundary, "");
 }
 
-fn map_exit_status(status: std::process::ExitStatus) -> acp::TerminalExitStatus {
+fn map_exit_status(status: std::process::ExitStatus) -> TerminalExitStatus {
     #[cfg(unix)]
     let mapped = {
         use std::os::unix::process::ExitStatusExt;
-        acp::TerminalExitStatus::new().signal(status.signal().map(|signal| signal.to_string()))
+        TerminalExitStatus::new().signal(status.signal().map(|signal| signal.to_string()))
     };
     #[cfg(not(unix))]
-    let mapped = acp::TerminalExitStatus::new();
+    let mapped = TerminalExitStatus::new();
     mapped.exit_code(status.code().map(|code| code as u32))
 }
 
@@ -771,6 +866,9 @@ fn internal_error(err: impl std::fmt::Display) -> acp::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::schema::{
+        PermissionOption, SessionId, ToolCallUpdate, ToolCallUpdateFields,
+    };
 
     fn test_db() -> Arc<Database> {
         let dir = std::env::temp_dir().join(format!(
@@ -797,10 +895,10 @@ mod tests {
             std::env::temp_dir().join(format!("microclaw_acp_client_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&root).await.unwrap();
         let client = AcpSessionClient::new(root.clone(), true, test_db(), "run-1".into());
-        let session_id = acp::SessionId::new("test-session");
+        let session_id = SessionId::new("test-session");
 
         client
-            .write_text_file(acp::WriteTextFileRequest::new(
+            .write_text_file(WriteTextFileRequest::new(
                 session_id.clone(),
                 root.join("notes/todo.txt"),
                 "hello",
@@ -808,7 +906,7 @@ mod tests {
             .await
             .unwrap();
         let read = client
-            .read_text_file(acp::ReadTextFileRequest::new(
+            .read_text_file(ReadTextFileRequest::new(
                 session_id.clone(),
                 root.join("notes/todo.txt"),
             ))
@@ -817,7 +915,7 @@ mod tests {
         assert_eq!(read.content, "hello");
 
         let err = client
-            .read_text_file(acp::ReadTextFileRequest::new(
+            .read_text_file(ReadTextFileRequest::new(
                 session_id,
                 PathBuf::from("/etc/hosts"),
             ))
@@ -833,17 +931,15 @@ mod tests {
             std::env::temp_dir().join(format!("microclaw_acp_term_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&root).await.unwrap();
         let client = AcpSessionClient::new(root.clone(), true, test_db(), "run-2".into());
-        let session_id = acp::SessionId::new("test-session");
+        let session_id = SessionId::new("test-session");
         let (command, args) = test_terminal_command();
 
         let created = client
-            .create_terminal(
-                acp::CreateTerminalRequest::new(session_id.clone(), command).args(args),
-            )
+            .create_terminal(CreateTerminalRequest::new(session_id.clone(), command).args(args))
             .await
             .unwrap();
         let waited = client
-            .wait_for_terminal_exit(acp::WaitForTerminalExitRequest::new(
+            .wait_for_terminal_exit(WaitForTerminalExitRequest::new(
                 session_id.clone(),
                 created.terminal_id.clone(),
             ))
@@ -852,7 +948,7 @@ mod tests {
         assert_eq!(waited.exit_status.exit_code, Some(0));
 
         let output = client
-            .terminal_output(acp::TerminalOutputRequest::new(
+            .terminal_output(TerminalOutputRequest::new(
                 session_id.clone(),
                 created.terminal_id.clone(),
             ))
@@ -861,7 +957,7 @@ mod tests {
         assert!(output.output.contains("hello"));
 
         client
-            .release_terminal(acp::ReleaseTerminalRequest::new(
+            .release_terminal(ReleaseTerminalRequest::new(
                 session_id,
                 created.terminal_id,
             ))
@@ -873,25 +969,17 @@ mod tests {
     #[tokio::test]
     async fn test_permission_auto_approve_prefers_allow() {
         let client = AcpSessionClient::new(std::env::temp_dir(), true, test_db(), "run-3".into());
-        let session_id = acp::SessionId::new("test-session");
+        let session_id = SessionId::new("test-session");
         let response = client
-            .request_permission(acp::RequestPermissionRequest::new(
+            .request_permission(RequestPermissionRequest::new(
                 session_id,
-                acp::ToolCallUpdate::new(
+                ToolCallUpdate::new(
                     "tool-1",
-                    acp::ToolCallUpdateFields::new().title("Run terminal".to_string()),
+                    ToolCallUpdateFields::new().title("Run terminal".to_string()),
                 ),
                 vec![
-                    acp::PermissionOption::new(
-                        "reject",
-                        "Reject",
-                        acp::PermissionOptionKind::RejectOnce,
-                    ),
-                    acp::PermissionOption::new(
-                        "allow",
-                        "Allow",
-                        acp::PermissionOptionKind::AllowOnce,
-                    ),
+                    PermissionOption::new("reject", "Reject", PermissionOptionKind::RejectOnce),
+                    PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
                 ],
             ))
             .await

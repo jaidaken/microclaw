@@ -335,7 +335,7 @@ async fn call_async(opts: &GatewayCallOptions) -> Result<serde_json::Value> {
             auth: GatewayConnectAuth { token: &token },
         },
     };
-    ws.send(Message::Text(serde_json::to_string(&connect)?))
+    ws.send(Message::Text(serde_json::to_string(&connect)?.into()))
         .await
         .context("failed to send gateway connect frame")?;
 
@@ -355,7 +355,7 @@ async fn call_async(opts: &GatewayCallOptions) -> Result<serde_json::Value> {
         method: opts.method.clone(),
         params,
     };
-    ws.send(Message::Text(serde_json::to_string(&request)?))
+    ws.send(Message::Text(serde_json::to_string(&request)?.into()))
         .await
         .with_context(|| format!("failed to send gateway method '{}'", opts.method))?;
 
