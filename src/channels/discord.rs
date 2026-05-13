@@ -362,6 +362,7 @@ impl EventHandler for Handler {
             let channel_name = self.runtime.channel_name.clone();
             call_blocking(self.app_state.db.clone(), move |db| {
                 db.resolve_or_create_chat_id(
+                    &microclaw_core::tenant::bootstrap_user_id(),
                     &channel_name,
                     &external_chat_id,
                     Some(&title),
@@ -521,7 +522,7 @@ impl EventHandler for Handler {
         // Store the chat and message
         let title = format!("discord-{external_channel_id}");
         let _ = call_blocking(self.app_state.db.clone(), move |db| {
-            db.upsert_chat(channel_id, Some(&title), "discord")
+            db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), channel_id, Some(&title), "discord")
         })
         .await;
         let stored = StoredMessage {

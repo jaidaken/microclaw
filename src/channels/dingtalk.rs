@@ -375,6 +375,7 @@ async fn process_dingtalk_webhook_message(
         let external_chat_id = external_chat_id.clone();
         move |db| {
             db.resolve_or_create_chat_id(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 &channel_name,
                 &external_chat_id,
                 Some(&title),

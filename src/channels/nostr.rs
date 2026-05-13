@@ -376,7 +376,7 @@ async fn nostr_webhook_handler(
         let external_chat_id = external_chat_id.clone();
         let chat_type = chat_type.to_string();
         move |db| {
-            db.resolve_or_create_chat_id(&channel_name, &external_chat_id, Some(&title), &chat_type)
+            db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), &channel_name, &external_chat_id, Some(&title), &chat_type)
         }
     })
     .await

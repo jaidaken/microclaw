@@ -211,6 +211,7 @@ impl MicroClawAcpAgent {
         let session_key_for_db = session_key.clone();
         let chat_id = call_blocking(self.app_state.db.clone(), move |db| {
             db.resolve_or_create_chat_id(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 ACP_CHANNEL,
                 &session_key_for_db,
                 Some(&session_key_for_db),

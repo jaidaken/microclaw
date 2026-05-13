@@ -3,4 +3,5 @@
 pub mod error;
 pub mod llm_types;
 pub mod redact;
+pub mod tenant;
 pub mod text;

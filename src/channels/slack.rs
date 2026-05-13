@@ -1133,7 +1133,7 @@ async fn handle_slack_message(
         let chat_type = chat_type.to_string();
         let channel_name = runtime.channel_name.clone();
         move |db| {
-            db.resolve_or_create_chat_id(&channel_name, &external_chat_id, Some(&title), &chat_type)
+            db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), &channel_name, &external_chat_id, Some(&title), &chat_type)
         }
     })
     .await

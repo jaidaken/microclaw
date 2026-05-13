@@ -1152,6 +1152,7 @@ async fn process_with_agent_logic(
             let output_tokens = i64::from(usage.output_tokens);
             let _ = call_blocking(state.db.clone(), move |db| {
                 db.log_llm_usage(
+                    &microclaw_core::tenant::bootstrap_user_id(),
                     chat_id,
                     &channel,
                     &provider,
@@ -2553,6 +2554,7 @@ async fn compact_messages(
                 let output_tokens = i64::from(usage.output_tokens);
                 let _ = call_blocking(state.db.clone(), move |db| {
                     db.log_llm_usage(
+                        &microclaw_core::tenant::bootstrap_user_id(),
                         chat_id,
                         &channel,
                         &provider,
@@ -2916,11 +2918,11 @@ mod tests {
     #[tokio::test]
     async fn test_build_db_memory_context_respects_token_budget() {
         let (db, dir) = test_db();
-        db.insert_memory(Some(100), "short memory one", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "short memory one", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "short memory two", "KNOWLEDGE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "short memory two", "KNOWLEDGE")
             .unwrap();
-        db.insert_memory(Some(100), "short memory three", "EVENT")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "short memory three", "EVENT")
             .unwrap();
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
@@ -2941,9 +2943,9 @@ mod tests {
     #[tokio::test]
     async fn test_build_db_memory_context_large_budget_keeps_all() {
         let (db, dir) = test_db();
-        db.insert_memory(Some(100), "user likes rust", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "user likes rust", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "user likes coffee", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "user likes coffee", "PROFILE")
             .unwrap();
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
@@ -2969,9 +2971,9 @@ mod tests {
     #[tokio::test]
     async fn test_build_db_memory_context_cjk_relevance() {
         let (db, dir) = test_db();
-        db.insert_memory(Some(100), "用户喜欢咖啡和编程", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "用户喜欢咖啡和编程", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "User prefers Rust and tea", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "User prefers Rust and tea", "PROFILE")
             .unwrap();
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
@@ -3036,6 +3038,7 @@ mod tests {
             let chat_id = state
                 .db
                 .resolve_or_create_chat_id(
+                    &microclaw_core::tenant::bootstrap_user_id(),
                     caller_channel,
                     external_chat_id,
                     Some("test-chat"),
@@ -3097,7 +3100,7 @@ mod tests {
         let state = test_state_with_base_dir(&base_dir);
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "topic-conflict-chat", Some("topic"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "topic-conflict-chat", Some("topic"), "web")
             .unwrap();
 
         store_user_message(
@@ -3173,7 +3176,7 @@ mod tests {
         let state = test_state_with_llm(&base_dir, Box::new(llm));
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "empty-retry-chat", Some("empty"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "empty-retry-chat", Some("empty"), "web")
             .unwrap();
         store_user_message(&state.db, chat_id, "hello");
 
@@ -3250,7 +3253,7 @@ mod tests {
         let state = test_state_with_llm(&base_dir, Box::new(llm));
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "approval-retry-chat", Some("approval"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "approval-retry-chat", Some("approval"), "web")
             .unwrap();
         store_user_message(&state.db, chat_id, "run bash");
 
@@ -3567,7 +3570,7 @@ mod tests {
         let state = test_state_with_llm_and_confirmation(&base_dir, Box::new(llm), true);
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "approval-confirm-chat", Some("approval"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "approval-confirm-chat", Some("approval"), "web")
             .unwrap();
         store_user_message(&state.db, chat_id, "run bash");
 
@@ -3605,7 +3608,7 @@ mod tests {
         let state = test_state_with_llm(&base_dir, Box::new(llm));
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "failed-tool-note-chat", Some("failed"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "failed-tool-note-chat", Some("failed"), "web")
             .unwrap();
         store_user_message(&state.db, chat_id, "build this repo");
 
@@ -3653,7 +3656,7 @@ mod tests {
         let state = test_state_with_llm_and_registry(&base_dir, Box::new(llm), Arc::new(registry));
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("feishu", "chat-feishu-1", Some("feishu"), "feishu_dm")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "feishu", "chat-feishu-1", Some("feishu"), "feishu_dm")
             .unwrap();
         store_user_message(&state.db, chat_id, "send the archive");
 
@@ -3696,7 +3699,7 @@ mod tests {
         let state = test_state_with_llm(&base_dir, Box::new(llm));
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "empty-tool-name-chat", Some("empty-tool"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "empty-tool-name-chat", Some("empty-tool"), "web")
             .unwrap();
         store_user_message(&state.db, chat_id, "search latest news");
 
@@ -3735,7 +3738,7 @@ mod tests {
         let state = test_state_with_llm(&base_dir, Box::new(llm));
         let chat_id = state
             .db
-            .resolve_or_create_chat_id("web", "tool-use-without-calls-chat", Some("tool"), "web")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "tool-use-without-calls-chat", Some("tool"), "web")
             .unwrap();
         store_user_message(&state.db, chat_id, "weather?");
 

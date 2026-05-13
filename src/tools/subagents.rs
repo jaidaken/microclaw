@@ -362,6 +362,7 @@ async fn run_sub_agent_task(
             let chat_id = auth_context.caller_chat_id;
             let _ = call_blocking(db.clone(), move |db| {
                 db.log_llm_usage(
+                    &microclaw_core::tenant::bootstrap_user_id(),
                     chat_id,
                     &channel,
                     &provider,

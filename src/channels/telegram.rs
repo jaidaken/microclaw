@@ -662,6 +662,7 @@ async fn handle_message(
         let channel_name = tg_channel_name.clone();
         let chat_id = call_blocking(state.db.clone(), move |db| {
             db.resolve_or_create_chat_id(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 &channel_name,
                 &external_chat_id,
                 chat_title_for_lookup.as_deref(),
@@ -880,6 +881,7 @@ async fn handle_message(
         let channel_name = tg_channel_name.clone();
         let chat_id = call_blocking(state.db.clone(), move |db| {
             db.resolve_or_create_chat_id(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 &channel_name,
                 &external_chat_id,
                 chat_title_for_lookup.as_deref(),
@@ -892,7 +894,7 @@ async fn handle_message(
         let chat_title_owned = chat_title.clone();
         let chat_type_owned = db_chat_type.to_string();
         let _ = call_blocking(state.db.clone(), move |db| {
-            db.upsert_chat(chat_id, chat_title_owned.as_deref(), &chat_type_owned)
+            db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), chat_id, chat_title_owned.as_deref(), &chat_type_owned)
         })
         .await;
         let stored_content = if image_data.is_some() {
@@ -932,6 +934,7 @@ async fn handle_message(
     let channel_name = tg_channel_name.clone();
     let chat_id = call_blocking(state.db.clone(), move |db| {
         db.resolve_or_create_chat_id(
+            &microclaw_core::tenant::bootstrap_user_id(),
             &channel_name,
             &external_chat_id,
             chat_title_for_lookup.as_deref(),
@@ -945,7 +948,7 @@ async fn handle_message(
     let chat_title_owned = chat_title.clone();
     let chat_type_owned = db_chat_type.to_string();
     let _ = call_blocking(state.db.clone(), move |db| {
-        db.upsert_chat(chat_id, chat_title_owned.as_deref(), &chat_type_owned)
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), chat_id, chat_title_owned.as_deref(), &chat_type_owned)
     })
     .await;
 

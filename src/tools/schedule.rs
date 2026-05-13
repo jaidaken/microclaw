@@ -1369,8 +1369,8 @@ mod tests {
     #[tokio::test]
     async fn test_web_caller_schedule_cross_chat_denied_even_for_control_chat() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("web-main"), "web").unwrap();
-        db.upsert_chat(200, Some("other"), "private").unwrap();
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 100, Some("web-main"), "web").unwrap();
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 200, Some("other"), "private").unwrap();
         let tool = ScheduleTaskTool::new(test_registry(), db, "UTC".into());
         let result = tool
             .execute(json!({

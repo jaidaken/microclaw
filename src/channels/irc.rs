@@ -458,7 +458,7 @@ async fn handle_irc_message(
         let title = title.clone();
         let db_chat_type = db_chat_type.to_string();
         move |db| {
-            db.resolve_or_create_chat_id("irc", &external_chat_id, Some(&title), &db_chat_type)
+            db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "irc", &external_chat_id, Some(&title), &db_chat_type)
         }
     })
     .await

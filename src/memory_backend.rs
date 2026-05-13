@@ -315,10 +315,11 @@ impl MemoryBackend {
 
     pub async fn get_memories_for_context(
         &self,
+        user_id: &str,
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
-        self.provider.get_memories_for_context(chat_id, limit).await
+        self.provider.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit).await
     }
 
     pub async fn search_memories_with_options(
@@ -340,6 +341,7 @@ impl MemoryBackend {
 
     pub async fn insert_memory_with_metadata(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
@@ -362,7 +364,7 @@ impl MemoryBackend {
             );
         }
         self.provider
-            .insert_memory_with_metadata(chat_id, content, category, source, confidence)
+            .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, content, category, source, confidence)
             .await
     }
 
@@ -438,6 +440,7 @@ pub trait MemoryProvider: Send + Sync {
 
     async fn get_memories_for_context(
         &self,
+        user_id: &str,
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError>;
@@ -455,6 +458,7 @@ pub trait MemoryProvider: Send + Sync {
 
     async fn insert_memory_with_metadata(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
@@ -616,11 +620,12 @@ impl MemoryProvider for SqliteMemoryProvider {
 
     async fn get_memories_for_context(
         &self,
+        user_id: &str,
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
         call_blocking(self.db.clone(), move |db| {
-            db.get_memories_for_context(chat_id, limit)
+            db.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit)
         })
         .await
     }
@@ -646,6 +651,7 @@ impl MemoryProvider for SqliteMemoryProvider {
 
     async fn insert_memory_with_metadata(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
@@ -656,7 +662,7 @@ impl MemoryProvider for SqliteMemoryProvider {
         let cat = category.to_string();
         let src = source.to_string();
         call_blocking(self.db.clone(), move |db| {
-            db.insert_memory_with_metadata(chat_id, &text, &cat, &src, confidence)
+            db.insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, &text, &cat, &src, confidence)
         })
         .await
     }
@@ -755,6 +761,7 @@ impl MemoryProvider for McpMemoryProvider {
 
     async fn get_memories_for_context(
         &self,
+        user_id: &str,
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
@@ -822,6 +829,7 @@ impl MemoryProvider for McpMemoryProvider {
 
     async fn insert_memory_with_metadata(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
@@ -1005,13 +1013,14 @@ impl MemoryProvider for FallbackMemoryProvider {
 
     async fn get_memories_for_context(
         &self,
+        user_id: &str,
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
         self.fallback_on_err(
             "memory_query(context)",
-            self.primary.get_memories_for_context(chat_id, limit),
-            self.fallback.get_memories_for_context(chat_id, limit),
+            self.primary.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit),
+            self.fallback.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, limit),
         )
         .await
     }
@@ -1055,6 +1064,7 @@ impl MemoryProvider for FallbackMemoryProvider {
 
     async fn insert_memory_with_metadata(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
@@ -1064,9 +1074,9 @@ impl MemoryProvider for FallbackMemoryProvider {
         self.fallback_on_err(
             "memory_upsert(insert)",
             self.primary
-                .insert_memory_with_metadata(chat_id, content, category, source, confidence),
+                .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, content, category, source, confidence),
             self.fallback
-                .insert_memory_with_metadata(chat_id, content, category, source, confidence),
+                .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), chat_id, content, category, source, confidence),
         )
         .await
     }
@@ -1467,7 +1477,7 @@ mod tests {
             Some("fake-primary".to_string()),
         );
 
-        let memories = backend.get_memories_for_context(42, 10).await.unwrap();
+        let memories = backend.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), 42, 10).await.unwrap();
         let snapshot = backend.provider_health_snapshot();
         assert_eq!(memories.len(), 1);
         assert_eq!(memories[0].content, "from fallback");

@@ -338,7 +338,7 @@ async fn qq_webhook_handler(
         let title = format!("qq-{external_chat_id}");
         let external_chat_id = external_chat_id.clone();
         move |db| {
-            db.resolve_or_create_chat_id(&channel_name, &external_chat_id, Some(&title), "qq_dm")
+            db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), &channel_name, &external_chat_id, Some(&title), "qq_dm")
         }
     })
     .await

@@ -192,7 +192,7 @@ pub(super) async fn api_reset(
 
         let session_key_for_chat = session_key.clone();
         call_blocking(state.app_state.db.clone(), move |db| {
-            db.upsert_chat(chat_id, Some(&session_key_for_chat), "web")
+            db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), chat_id, Some(&session_key_for_chat), "web")
         })
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -340,6 +340,7 @@ pub(super) async fn api_sessions_fork(
     let target_session_key_for_create = target_session_key.clone();
     let target_chat_id = call_blocking(state.app_state.db.clone(), move |db| {
         db.resolve_or_create_chat_id(
+            &microclaw_core::tenant::bootstrap_user_id(),
             "web",
             &target_session_key_for_create,
             Some(&target_session_key_for_create),
@@ -359,7 +360,7 @@ pub(super) async fn api_sessions_fork(
 
     let target_session_key_for_upsert = target_session_key.clone();
     call_blocking(state.app_state.db.clone(), move |db| {
-        db.upsert_chat(target_chat_id, Some(&target_session_key_for_upsert), "web")
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), target_chat_id, Some(&target_session_key_for_upsert), "web")
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

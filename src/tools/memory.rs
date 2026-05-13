@@ -328,6 +328,7 @@ impl Tool for WriteMemoryTool {
                             if let Ok(memory_id) = self
                                 .memory_backend
                                 .insert_memory_with_metadata(
+                                    &microclaw_core::tenant::bootstrap_user_id(),
                                     chat_id,
                                     &normalized,
                                     "KNOWLEDGE",
@@ -434,7 +435,7 @@ mod tests {
     async fn test_write_and_read_memory_chat() {
         let dir = test_dir();
         let db = test_db(&dir);
-        db.resolve_or_create_chat_id("web", "42", Some("web-42"), "web")
+        db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "42", Some("web-42"), "web")
             .unwrap();
         let write_tool =
             WriteMemoryTool::new(dir.to_str().unwrap(), db.clone(), test_backend(db.clone()));
@@ -472,7 +473,7 @@ mod tests {
     async fn test_write_memory_chat_uses_auth_chat_id_when_missing() {
         let dir = test_dir();
         let db = test_db(&dir);
-        db.resolve_or_create_chat_id("web", "42", Some("web-42"), "web")
+        db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "42", Some("web-42"), "web")
             .unwrap();
         let tool =
             WriteMemoryTool::new(dir.to_str().unwrap(), db.clone(), test_backend(db.clone()));
@@ -499,7 +500,7 @@ mod tests {
     async fn test_write_memory_chat_upserts_per_sender() {
         let dir = test_dir();
         let db = test_db(&dir);
-        db.resolve_or_create_chat_id("web", "42", Some("web-42"), "web")
+        db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "42", Some("web-42"), "web")
             .unwrap();
         let tool =
             WriteMemoryTool::new(dir.to_str().unwrap(), db.clone(), test_backend(db.clone()));
@@ -678,7 +679,7 @@ mod tests {
     async fn test_read_memory_chat_allowed_for_control_chat_cross_chat() {
         let dir = test_dir();
         let db = test_db(&dir);
-        db.resolve_or_create_chat_id("web", "200", Some("web-200"), "web")
+        db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "200", Some("web-200"), "web")
             .unwrap();
         let write_tool = WriteMemoryTool::new(dir.to_str().unwrap(), db.clone(), test_backend(db));
         let db2 = test_db(&dir);

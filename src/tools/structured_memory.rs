@@ -365,9 +365,9 @@ mod tests {
     #[tokio::test]
     async fn test_search_returns_results() {
         let db = test_db();
-        db.insert_memory(Some(100), "User loves Rust programming", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "User loves Rust programming", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "User likes coffee", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "User likes coffee", "PROFILE")
             .unwrap();
         let tool = StructuredMemorySearchTool::new(db.clone(), test_backend(db));
         let result = tool
@@ -393,7 +393,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_own_chat_memory() {
         let db = test_db();
-        let id = db.insert_memory(Some(100), "to delete", "EVENT").unwrap();
+        let id = db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "to delete", "EVENT").unwrap();
         let tool = StructuredMemoryDeleteTool::new(db.clone(), test_backend(db.clone()));
         let result = tool
             .execute(json!({
@@ -409,7 +409,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_other_chat_denied() {
         let db = test_db();
-        let id = db.insert_memory(Some(200), "other chat", "EVENT").unwrap();
+        let id = db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(200), "other chat", "EVENT").unwrap();
         let tool = StructuredMemoryDeleteTool::new(db.clone(), test_backend(db));
         let result = tool
             .execute(json!({
@@ -424,9 +424,9 @@ mod tests {
     #[tokio::test]
     async fn test_search_empty_query_lists_recent_visible_memories() {
         let db = test_db();
-        db.insert_memory(Some(100), "chat memory", "PROFILE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "chat memory", "PROFILE")
             .unwrap();
-        db.insert_memory(None, "global memory", "KNOWLEDGE")
+        db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), None, "global memory", "KNOWLEDGE")
             .unwrap();
         let tool = StructuredMemorySearchTool::new(db.clone(), test_backend(db));
         let result = tool
@@ -444,7 +444,7 @@ mod tests {
     async fn test_update_memory() {
         let db = test_db();
         let id = db
-            .insert_memory(Some(100), "User lives in Tokyo", "PROFILE")
+            .insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "User lives in Tokyo", "PROFILE")
             .unwrap();
         let tool = StructuredMemoryUpdateTool::new(db.clone(), test_backend(db.clone()));
         let result = tool
@@ -462,7 +462,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_content_too_long() {
         let db = test_db();
-        let id = db.insert_memory(Some(100), "short", "EVENT").unwrap();
+        let id = db.insert_memory(&microclaw_core::tenant::bootstrap_user_id(), Some(100), "short", "EVENT").unwrap();
         let tool = StructuredMemoryUpdateTool::new(db.clone(), test_backend(db));
         let long = "x".repeat(301);
         let result = tool

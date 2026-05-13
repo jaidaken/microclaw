@@ -2554,7 +2554,7 @@ async fn handle_feishu_message(
         let title = title.clone();
         let chat_type = chat_type.to_string();
         let channel_name = runtime.channel_name.clone();
-        move |db| db.resolve_or_create_chat_id(&channel_name, &external, Some(&title), &chat_type)
+        move |db| db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), &channel_name, &external, Some(&title), &chat_type)
     })
     .await
     .unwrap_or(0);

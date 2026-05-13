@@ -266,6 +266,7 @@ pub(crate) async fn maybe_handle_explicit_memory_command(
     let inserted_id = state
         .memory_backend
         .insert_memory_with_metadata(
+            &microclaw_core::tenant::bootstrap_user_id(),
             Some(chat_id),
             &content_for_insert,
             "KNOWLEDGE",
@@ -401,7 +402,7 @@ pub(crate) async fn build_db_memory_context(
     recency_half_life_days: f64,
 ) -> String {
     let query = &sanitize_memory_query(query);
-    let memories = match memory_backend.get_memories_for_context(chat_id, 100).await {
+    let memories = match memory_backend.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, 100).await {
         Ok(m) => m,
         Err(_) => return String::new(),
     };
@@ -790,7 +791,7 @@ pub(crate) async fn apply_reflector_extractions(
         let category = category.to_string();
         let inserted_id = state
             .memory_backend
-            .insert_memory_with_metadata(Some(chat_id), &db_content, &category, "reflector", 0.68)
+            .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), Some(chat_id), &db_content, &category, "reflector", 0.68)
             .await
             .ok();
         if let Some(memory_id) = inserted_id {

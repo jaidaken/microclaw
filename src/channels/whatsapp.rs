@@ -566,6 +566,7 @@ async fn handle_whatsapp_message(
         let channel_name = runtime.channel_name.clone();
         move |db| {
             db.resolve_or_create_chat_id(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 &channel_name,
                 &external_chat_id,
                 Some(&title),

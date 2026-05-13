@@ -1559,7 +1559,7 @@ async fn resolve_chat_id_for_session_key(
 
     let key = session_key.to_string();
     call_blocking(state.app_state.db.clone(), move |db| {
-        db.resolve_or_create_chat_id("web", &key, Some(&key), "web")
+        db.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", &key, Some(&key), "web")
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
@@ -1917,6 +1917,7 @@ async fn send_and_store_response_with_events(
         let session_key_for_lookup = session_key.clone();
         call_blocking(state.app_state.db.clone(), move |db| {
             db.resolve_or_create_chat_id(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 "web",
                 &session_key_for_lookup,
                 Some(&session_key_for_lookup),
@@ -3415,8 +3416,9 @@ mod tests {
         let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
         let db = web_state.app_state.db.clone();
         call_blocking(db, |d| {
-            d.upsert_chat(123, Some("main"), "web")?;
+            d.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 123, Some("main"), "web")?;
             d.log_llm_usage(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 123,
                 "web",
                 "anthropic",
@@ -3460,8 +3462,9 @@ mod tests {
         let started_at = started_at_dt.to_rfc3339();
         let finished_at = (started_at_dt + chrono::Duration::seconds(1)).to_rfc3339();
         call_blocking(db, move |d| {
-            d.upsert_chat(123, Some("main"), "web")?;
+            d.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 123, Some("main"), "web")?;
             d.insert_memory_with_metadata(
+                &microclaw_core::tenant::bootstrap_user_id(),
                 Some(123),
                 "prod db on 5433",
                 "KNOWLEDGE",
@@ -3576,6 +3579,7 @@ mod tests {
             )?;
             for i in 0..5000 {
                 d.resolve_or_create_chat_id(
+                    &microclaw_core::tenant::bootstrap_user_id(),
                     "web",
                     &format!("ext-{i}"),
                     Some(&format!("title-{i}")),
@@ -3583,9 +3587,10 @@ mod tests {
                 )?;
             }
             let legacy_chat =
-                d.resolve_or_create_chat_id("web", "legacy-ext", Some("legacy-session"), "web")?;
+                d.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "legacy-ext", Some("legacy-session"), "web")?;
             for i in 5000..9300 {
                 d.resolve_or_create_chat_id(
+                    &microclaw_core::tenant::bootstrap_user_id(),
                     "web",
                     &format!("ext-{i}"),
                     Some(&format!("title-{i}")),
@@ -3645,7 +3650,7 @@ mod tests {
 
         let db = web_state.app_state.db.clone();
         let chat_id = call_blocking(db.clone(), move |d| {
-            d.resolve_or_create_chat_id("web", "scoped-main", Some("scoped-main"), "web")
+            d.resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "web", "scoped-main", Some("scoped-main"), "web")
         })
         .await
         .unwrap();
@@ -4232,7 +4237,7 @@ mod tests {
         let app = build_router(web_state.clone());
         let db = web_state.app_state.db.clone();
         call_blocking(db, move |d| {
-            d.upsert_chat(4242, Some("chat:4242"), "web")?;
+            d.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 4242, Some("chat:4242"), "web")?;
             d.save_session(4242, r#"[{"role":"user","content":"hi"}]"#)?;
             d.store_message(&StoredMessage {
                 id: "m1".into(),
@@ -5577,7 +5582,7 @@ commands:
         let session_key_for_db = session_key.clone();
 
         call_blocking(web_state.app_state.db.clone(), move |db| {
-            db.upsert_chat(chat_id, Some(&session_key_for_db), "web")
+            db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), chat_id, Some(&session_key_for_db), "web")
         })
         .await
         .unwrap();

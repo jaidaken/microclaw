@@ -438,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_web_target_writes_to_db() {
         let (db, dir) = test_db();
-        db.upsert_chat(999, Some("web-main"), "web").unwrap();
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 999, Some("web-main"), "web").unwrap();
 
         let tool = SendMessageTool::new(
             test_registry(),
@@ -469,7 +469,7 @@ mod tests {
     async fn test_send_message_uses_channel_account_sender_name() {
         let (db, dir) = test_db();
         let chat_id = db
-            .resolve_or_create_chat_id("telegram.sales", "9001", Some("sales"), "private")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "telegram.sales", "9001", Some("sales"), "private")
             .unwrap();
 
         let mut registry = ChannelRegistry::new();
@@ -507,8 +507,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_web_caller_cross_chat_denied() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("web-main"), "web").unwrap();
-        db.upsert_chat(200, Some("tg"), "private").unwrap();
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 100, Some("web-main"), "web").unwrap();
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 200, Some("tg"), "private").unwrap();
 
         // Need telegram adapter registered for "private" chat type
         let mut registry = ChannelRegistry::new();
@@ -578,7 +578,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_attachment_non_telegram_rejected_without_network() {
         let (db, dir) = test_db();
-        db.upsert_chat(999, Some("web-main"), "web").unwrap();
+        db.upsert_chat(&microclaw_core::tenant::bootstrap_user_id(), 999, Some("web-main"), "web").unwrap();
 
         let attachment = dir.join("sample.txt");
         std::fs::write(&attachment, "hello").unwrap();
@@ -605,7 +605,7 @@ mod tests {
     async fn test_feishu_reaction_guard_allows_attachment_send() {
         let (db, dir) = test_db();
         let chat_id = db
-            .resolve_or_create_chat_id("feishu", "chat-1", Some("feishu"), "feishu_dm")
+            .resolve_or_create_chat_id(&microclaw_core::tenant::bootstrap_user_id(), "feishu", "chat-1", Some("feishu"), "feishu_dm")
             .unwrap();
 
         let attachment = dir.join("sample.txt");
