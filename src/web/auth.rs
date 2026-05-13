@@ -195,6 +195,7 @@ pub(super) async fn api_auth_set_password(
         None,
         "ok",
         None,
+        None,
     )
     .await;
     Ok(Json(AuthAck { ok: true }))
@@ -292,7 +293,17 @@ pub(super) async fn api_auth_login(
     let csrf_token = uuid::Uuid::new_v4().to_string();
     let cookie = session_cookie_header(&session_id, &expires_http, secure_cookie);
     let csrf_cookie = csrf_cookie_header(&csrf_token, &expires_http, secure_cookie);
-    audit_log(&state, "operator", "login", "auth.login", None, "ok", None).await;
+    audit_log(
+        &state,
+        "operator",
+        "login",
+        "auth.login",
+        None,
+        "ok",
+        None,
+        None,
+    )
+    .await;
     Ok((
         StatusCode::OK,
         axum::response::AppendHeaders([("set-cookie", cookie), ("set-cookie", csrf_cookie)]),
@@ -439,6 +450,7 @@ pub(super) async fn api_auth_create_api_key(
         Some(&prefix),
         "ok",
         None,
+        None,
     )
     .await;
     Ok(Json(AuthCreatedApiKey {
@@ -483,6 +495,7 @@ pub(super) async fn api_auth_revoke_api_key(
         "auth.api_key.revoke",
         Some(&key_id.to_string()),
         if revoked { "ok" } else { "miss" },
+        None,
         None,
     )
     .await;
@@ -560,6 +573,7 @@ pub(super) async fn api_auth_rotate_api_key(
         Some(&key_id.to_string()),
         "ok",
         Some(&prefix),
+        None,
     )
     .await;
     Ok(Json(json!({

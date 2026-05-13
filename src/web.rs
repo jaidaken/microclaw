@@ -695,6 +695,7 @@ fn metrics_history_retention_days(config: &Config) -> i64 {
     30
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn audit_log(
     state: &WebState,
     kind: &str,
@@ -703,6 +704,7 @@ async fn audit_log(
     target: Option<&str>,
     status: &str,
     detail: Option<&str>,
+    subject_user_id: Option<&str>,
 ) {
     let kind = kind.to_string();
     let actor = actor.to_string();
@@ -710,6 +712,7 @@ async fn audit_log(
     let target = target.map(str::to_string);
     let status = status.to_string();
     let detail = detail.map(str::to_string);
+    let subject = subject_user_id.map(str::to_string);
     let _ = call_blocking(state.app_state.db.clone(), move |db| {
         db.log_audit_event(
             &kind,
@@ -718,6 +721,7 @@ async fn audit_log(
             target.as_deref(),
             &status,
             detail.as_deref(),
+            subject.as_deref(),
         )
         .map(|_| ())
     })
@@ -2143,11 +2147,16 @@ async fn api_audit_logs(
     Query(query): Query<AuditQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Operator).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
+    let subject_filter = if identity.is_operator() {
+        None
+    } else {
+        Some(extract_user_id(&headers)?)
+    };
     let limit = query.limit.unwrap_or(200).clamp(1, 2000);
     let kind = query.kind.map(|k| k.trim().to_string());
     let rows = call_blocking(state.app_state.db.clone(), move |db| {
-        db.list_audit_logs(kind.as_deref(), limit)
+        db.list_audit_logs(kind.as_deref(), subject_filter.as_deref(), limit)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -6091,8 +6100,41 @@ commands:
     }
 
     #[tokio::test]
-    async fn member_audit_endpoint_denied() {
+    async fn member_audit_filter_subject_user_id() {
         let web_state = test_web_state(Box::new(DummyLlm), WebLimits::default());
+        let db = web_state.app_state.db.clone();
+        call_blocking(db, |d| {
+            d.log_audit_event(
+                "session",
+                "alice",
+                "session.reset",
+                Some("main"),
+                "ok",
+                None,
+                Some("user-alice"),
+            )?;
+            d.log_audit_event(
+                "session",
+                "bob",
+                "session.reset",
+                Some("main"),
+                "ok",
+                None,
+                Some("user-bob"),
+            )?;
+            d.log_audit_event(
+                "operator",
+                "op",
+                "auth.api_key.rotate",
+                Some("k1"),
+                "ok",
+                None,
+                None,
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
         seed_test_api_key_with_scopes(
             &web_state,
             "member-token-audit",
@@ -6105,10 +6147,20 @@ commands:
             .method("GET")
             .uri("/api/audit")
             .header("authorization", "Bearer member-token-audit")
+            .header("X-Clawchat-User-Id", "user-alice")
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 65_536)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let logs = v["logs"].as_array().unwrap();
+        for entry in logs {
+            assert_eq!(entry["actor"], "alice");
+        }
+        assert!(!logs.is_empty(), "alice should see her own rows");
     }
 
     #[tokio::test]

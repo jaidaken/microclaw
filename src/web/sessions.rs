@@ -242,6 +242,7 @@ pub(super) async fn api_reset(
         Some(&session_key),
         if deleted { "ok" } else { "miss" },
         None,
+        Some(&user_id),
     )
     .await;
     Ok(Json(json!({ "ok": true, "deleted": deleted })))
@@ -299,6 +300,7 @@ pub(super) async fn api_delete_session(
         Some(&session_key),
         if deleted { "ok" } else { "miss" },
         None,
+        Some(&user_id),
     )
     .await;
     Ok(Json(json!({ "ok": true, "deleted": deleted })))
@@ -423,6 +425,7 @@ pub(super) async fn api_sessions_fork(
         Some(&target_session_key),
         "ok",
         Some(&source_session_key),
+        Some(&user_id),
     )
     .await;
     Ok(Json(json!({

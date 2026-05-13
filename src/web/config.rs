@@ -1000,6 +1000,7 @@ pub(super) async fn api_update_config(
         Some(&path.to_string_lossy()),
         "ok",
         None,
+        None,
     )
     .await;
 

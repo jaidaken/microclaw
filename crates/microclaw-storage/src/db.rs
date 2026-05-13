@@ -3157,13 +3157,14 @@ impl Database {
         target: Option<&str>,
         status: &str,
         detail: Option<&str>,
+        subject_user_id: Option<&str>,
     ) -> Result<i64, MicroClawError> {
         let conn = self.lock_conn();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO audit_logs(kind, actor, action, target, status, detail, created_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![kind, actor, action, target, status, detail, now],
+            "INSERT INTO audit_logs(kind, actor, action, target, status, detail, created_at, subject_user_id)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![kind, actor, action, target, status, detail, now, subject_user_id],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -3171,54 +3172,70 @@ impl Database {
     pub fn list_audit_logs(
         &self,
         kind: Option<&str>,
+        subject_user_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<AuditLogRecord>, MicroClawError> {
         let conn = self.lock_conn();
+        let row_mapper = |row: &rusqlite::Row<'_>| {
+            Ok(AuditLogRecord {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                actor: row.get(2)?,
+                action: row.get(3)?,
+                target: row.get(4)?,
+                status: row.get(5)?,
+                detail: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        };
         let mut rows = Vec::new();
-        if let Some(k) = kind {
-            let mut stmt = conn.prepare(
-                "SELECT id, kind, actor, action, target, status, detail, created_at
-                 FROM audit_logs
-                 WHERE kind = ?1
-                 ORDER BY id DESC
-                 LIMIT ?2",
-            )?;
-            let iter = stmt.query_map(params![k, limit as i64], |row| {
-                Ok(AuditLogRecord {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    actor: row.get(2)?,
-                    action: row.get(3)?,
-                    target: row.get(4)?,
-                    status: row.get(5)?,
-                    detail: row.get(6)?,
-                    created_at: row.get(7)?,
-                })
-            })?;
-            for item in iter {
-                rows.push(item?);
+        match (kind, subject_user_id) {
+            (Some(k), Some(u)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, kind, actor, action, target, status, detail, created_at
+                     FROM audit_logs
+                     WHERE kind = ?1 AND subject_user_id = ?2
+                     ORDER BY id DESC
+                     LIMIT ?3",
+                )?;
+                for item in stmt.query_map(params![k, u, limit as i64], row_mapper)? {
+                    rows.push(item?);
+                }
             }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT id, kind, actor, action, target, status, detail, created_at
-                 FROM audit_logs
-                 ORDER BY id DESC
-                 LIMIT ?1",
-            )?;
-            let iter = stmt.query_map(params![limit as i64], |row| {
-                Ok(AuditLogRecord {
-                    id: row.get(0)?,
-                    kind: row.get(1)?,
-                    actor: row.get(2)?,
-                    action: row.get(3)?,
-                    target: row.get(4)?,
-                    status: row.get(5)?,
-                    detail: row.get(6)?,
-                    created_at: row.get(7)?,
-                })
-            })?;
-            for item in iter {
-                rows.push(item?);
+            (Some(k), None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, kind, actor, action, target, status, detail, created_at
+                     FROM audit_logs
+                     WHERE kind = ?1
+                     ORDER BY id DESC
+                     LIMIT ?2",
+                )?;
+                for item in stmt.query_map(params![k, limit as i64], row_mapper)? {
+                    rows.push(item?);
+                }
+            }
+            (None, Some(u)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, kind, actor, action, target, status, detail, created_at
+                     FROM audit_logs
+                     WHERE subject_user_id = ?1
+                     ORDER BY id DESC
+                     LIMIT ?2",
+                )?;
+                for item in stmt.query_map(params![u, limit as i64], row_mapper)? {
+                    rows.push(item?);
+                }
+            }
+            (None, None) => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, kind, actor, action, target, status, detail, created_at
+                     FROM audit_logs
+                     ORDER BY id DESC
+                     LIMIT ?1",
+                )?;
+                for item in stmt.query_map(params![limit as i64], row_mapper)? {
+                    rows.push(item?);
+                }
             }
         }
         Ok(rows)
@@ -7554,9 +7571,10 @@ mod tests {
             Some("k1"),
             "ok",
             None,
+            None,
         )
         .unwrap();
-        let logs = db.list_audit_logs(Some("operator"), 20).unwrap();
+        let logs = db.list_audit_logs(Some("operator"), None, 20).unwrap();
         assert!(!logs.is_empty());
 
         cleanup(&dir);

@@ -216,6 +216,7 @@ async fn audit_auth_event(
             target.as_deref(),
             &status,
             detail.as_deref(),
+            None,
         )
         .map(|_| ())
     })

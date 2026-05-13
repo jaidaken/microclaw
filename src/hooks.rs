@@ -316,8 +316,16 @@ impl HookManager {
         let status = status.to_string();
         let detail = detail.map(str::to_string);
         let _ = call_blocking(db, move |d| {
-            d.log_audit_event("hook", &actor, &action, None, &status, detail.as_deref())
-                .map(|_| ())
+            d.log_audit_event(
+                "hook",
+                &actor,
+                &action,
+                None,
+                &status,
+                detail.as_deref(),
+                None,
+            )
+            .map(|_| ())
         })
         .await;
     }

@@ -169,6 +169,7 @@ pub(super) async fn api_a2a_message(
         })
         .unwrap_or_else(|| "a2a-remote".to_string());
 
+    let target_user_id_for_audit = target_user_id.clone();
     let result = super::send_and_store_response(
         state.clone(),
         super::SendRequest {
@@ -199,6 +200,7 @@ pub(super) async fn api_a2a_message(
         Some(&resolved_session_key),
         "ok",
         body.source_url.as_deref(),
+        Some(&target_user_id_for_audit),
     )
     .await;
 
