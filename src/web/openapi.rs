@@ -16,6 +16,14 @@ use crate::web::metrics_http_inc;
         version = env!("CARGO_PKG_VERSION"),
         description = "Microclaw multi-channel agent runtime HTTP API",
         license(name = "MIT"),
+        contact(
+            name = "microclaw maintainers",
+            url = "https://github.com/microclaw/microclaw",
+        ),
+    ),
+    servers(
+        (url = "http://localhost:8080", description = "Local development"),
+        (url = "http://192.168.1.20:8080", description = "Operator LAN deployment"),
     ),
     tags(
         (name = "auth",     description = "Authentication, sessions, API keys"),
