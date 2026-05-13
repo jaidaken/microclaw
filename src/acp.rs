@@ -401,7 +401,7 @@ impl MicroClawAcpAgent {
     async fn cancel(&self, args: CancelNotification) -> AcpResult<()> {
         let session_key = args.session_id.0.to_string();
         let maybe_chat_id = call_blocking(self.app_state.db.clone(), move |db| {
-            db.get_chat_id_by_channel_and_title(ACP_CHANNEL, &session_key)
+            db.get_chat_id_by_channel_and_title(None, ACP_CHANNEL, &session_key)
         })
         .await
         .map_err(to_acp_error)?;

@@ -1544,6 +1544,7 @@ async fn enqueue_hook_message(
 async fn resolve_chat_id_for_session_key_read(
     state: &WebState,
     session_key: &str,
+    user_filter: Option<&str>,
 ) -> Result<i64, (StatusCode, String)> {
     if let Some(parsed) = parse_chat_id_from_session_key(session_key) {
         let exists = call_blocking(state.app_state.db.clone(), move |db| {
@@ -1559,8 +1560,9 @@ async fn resolve_chat_id_for_session_key_read(
     }
 
     let key = session_key.to_string();
+    let user_owned = user_filter.map(str::to_string);
     let by_title = call_blocking(state.app_state.db.clone(), move |db| {
-        db.get_chat_id_by_channel_and_title("web", &key)
+        db.get_chat_id_by_channel_and_title(user_owned.as_deref(), "web", &key)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1582,8 +1584,9 @@ async fn resolve_chat_id_for_session_key(
     }
 
     let key = session_key.to_string();
+    let user_owned_lookup = user_id.to_string();
     let by_title = call_blocking(state.app_state.db.clone(), move |db| {
-        db.get_chat_id_by_channel_and_title("web", &key)
+        db.get_chat_id_by_channel_and_title(Some(&user_owned_lookup), "web", &key)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1622,7 +1625,14 @@ async fn api_usage(
     let identity = require_scope(&state, &headers, AuthScope::Read).await?;
 
     let session_key = normalize_session_key(query.session_key.as_deref());
-    let chat_id = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+    let resolve_filter = if identity.is_operator() {
+        None
+    } else {
+        Some(extract_user_id(&headers)?)
+    };
+    let chat_id =
+        resolve_chat_id_for_session_key_read(&state, &session_key, resolve_filter.as_deref())
+            .await?;
     assert_chat_visible_to_caller(&state, &identity, &headers, chat_id).await?;
     let report = build_usage_report(state.app_state.db.clone(), chat_id)
         .await
@@ -1697,7 +1707,14 @@ async fn api_memory_observability(
         None
     } else {
         let session_key = normalize_session_key(query.session_key.as_deref());
-        let cid = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+        let resolve_filter = if identity.is_operator() {
+            None
+        } else {
+            Some(extract_user_id(&headers)?)
+        };
+        let cid =
+            resolve_chat_id_for_session_key_read(&state, &session_key, resolve_filter.as_deref())
+                .await?;
         assert_chat_visible_to_caller(&state, &identity, &headers, cid).await?;
         Some(cid)
     };
@@ -3604,7 +3621,7 @@ mod tests {
         })
         .await
         .unwrap();
-        let before = call_blocking(db.clone(), move |d| d.get_recent_chats(4000))
+        let before = call_blocking(db.clone(), move |d| d.get_recent_chats(None, 4000))
             .await
             .unwrap()
             .len();
@@ -3619,13 +3636,14 @@ mod tests {
                 .method("GET")
                 .uri(uri)
                 .header("authorization", format!("Bearer {read_key}"))
+                .header("X-Clawchat-User-Id", &microclaw_core::tenant::bootstrap_user_id())
                 .body(Body::empty())
                 .unwrap();
             let resp = app.clone().oneshot(req).await.unwrap();
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         }
 
-        let after = call_blocking(db, move |d| d.get_recent_chats(4000))
+        let after = call_blocking(db, move |d| d.get_recent_chats(None, 4000))
             .await
             .unwrap()
             .len();
@@ -3685,6 +3703,7 @@ mod tests {
             .method("GET")
             .uri("/api/history?session_key=legacy-session")
             .header("authorization", format!("Bearer {read_key}"))
+            .header("X-Clawchat-User-Id", &microclaw_core::tenant::bootstrap_user_id())
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
@@ -5321,9 +5340,12 @@ commands:
             .unwrap();
         app.clone().oneshot(req2).await.unwrap();
 
-        let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/"))
-            .await
-            .unwrap();
+        let ws_url = format!("ws://{addr}/");
+        let mut ws_req = <_ as tokio_tungstenite::tungstenite::client::IntoClientRequest>::into_client_request(ws_url).unwrap();
+        ws_req
+            .headers_mut()
+            .insert("X-Clawchat-User-Id", "test-user-id".parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(ws_req).await.unwrap();
         let _ = recv_ws_json(&mut ws).await;
         ws.send(tokio_tungstenite::tungstenite::Message::Text(
             json!({
@@ -6038,7 +6060,8 @@ commands:
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        // user-scoped resolve hides cross-user sessions as 404 instead of 403, avoiding the existence oracle.
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

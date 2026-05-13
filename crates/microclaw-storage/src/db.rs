@@ -1714,40 +1714,72 @@ impl Database {
         Ok(chats)
     }
 
-    pub fn get_recent_chats(&self, limit: usize) -> Result<Vec<ChatSummary>, MicroClawError> {
+    pub fn get_recent_chats(
+        &self,
+        user_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ChatSummary>, MicroClawError> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
-            "SELECT
-                c.chat_id,
-                c.chat_title,
-                s.label,
-                c.chat_type,
-                c.last_message_time,
-                (
-                    SELECT m.content
-                    FROM messages m
-                    WHERE m.chat_id = c.chat_id
-                    ORDER BY m.timestamp DESC
-                    LIMIT 1
-                ) AS last_message_preview
-             FROM chats c
-             LEFT JOIN sessions s ON s.chat_id = c.chat_id
-             ORDER BY c.last_message_time DESC
-             LIMIT ?1",
-        )?;
-        let chats = stmt
-            .query_map(params![limit as i64], |row| {
-                Ok(ChatSummary {
-                    chat_id: row.get(0)?,
-                    chat_title: row.get(1)?,
-                    session_label: row.get(2)?,
-                    chat_type: row.get(3)?,
-                    last_message_time: row.get(4)?,
-                    last_message_preview: row.get(5)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(chats)
+        let row_mapper = |row: &rusqlite::Row<'_>| {
+            Ok(ChatSummary {
+                chat_id: row.get(0)?,
+                chat_title: row.get(1)?,
+                session_label: row.get(2)?,
+                chat_type: row.get(3)?,
+                last_message_time: row.get(4)?,
+                last_message_preview: row.get(5)?,
+            })
+        };
+        if let Some(uid) = user_id {
+            let mut stmt = conn.prepare(
+                "SELECT
+                    c.chat_id,
+                    c.chat_title,
+                    s.label,
+                    c.chat_type,
+                    c.last_message_time,
+                    (
+                        SELECT m.content
+                        FROM messages m
+                        WHERE m.chat_id = c.chat_id
+                        ORDER BY m.timestamp DESC
+                        LIMIT 1
+                    ) AS last_message_preview
+                 FROM chats c
+                 LEFT JOIN sessions s ON s.chat_id = c.chat_id
+                 WHERE c.user_id = ?1
+                 ORDER BY c.last_message_time DESC
+                 LIMIT ?2",
+            )?;
+            let chats = stmt
+                .query_map(params![uid, limit as i64], row_mapper)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(chats)
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT
+                    c.chat_id,
+                    c.chat_title,
+                    s.label,
+                    c.chat_type,
+                    c.last_message_time,
+                    (
+                        SELECT m.content
+                        FROM messages m
+                        WHERE m.chat_id = c.chat_id
+                        ORDER BY m.timestamp DESC
+                        LIMIT 1
+                    ) AS last_message_preview
+                 FROM chats c
+                 LEFT JOIN sessions s ON s.chat_id = c.chat_id
+                 ORDER BY c.last_message_time DESC
+                 LIMIT ?1",
+            )?;
+            let chats = stmt
+                .query_map(params![limit as i64], row_mapper)?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(chats)
+        }
     }
 
     pub fn get_chat_type(&self, chat_id: i64) -> Result<Option<String>, MicroClawError> {
@@ -1766,19 +1798,32 @@ impl Database {
 
     pub fn get_chat_id_by_channel_and_title(
         &self,
+        user_id: Option<&str>,
         channel: &str,
         chat_title: &str,
     ) -> Result<Option<i64>, MicroClawError> {
         let conn = self.lock_conn();
-        let result = conn.query_row(
-            "SELECT chat_id
-             FROM chats
-             WHERE channel = ?1 AND chat_title = ?2
-             ORDER BY last_message_time DESC
-             LIMIT 1",
-            params![channel, chat_title],
-            |row| row.get::<_, i64>(0),
-        );
+        let result = if let Some(uid) = user_id {
+            conn.query_row(
+                "SELECT chat_id
+                 FROM chats
+                 WHERE user_id = ?1 AND channel = ?2 AND chat_title = ?3
+                 ORDER BY last_message_time DESC
+                 LIMIT 1",
+                params![uid, channel, chat_title],
+                |row| row.get::<_, i64>(0),
+            )
+        } else {
+            conn.query_row(
+                "SELECT chat_id
+                 FROM chats
+                 WHERE channel = ?1 AND chat_title = ?2
+                 ORDER BY last_message_time DESC
+                 LIMIT 1",
+                params![channel, chat_title],
+                |row| row.get::<_, i64>(0),
+            )
+        };
         match result {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -6922,7 +6967,7 @@ mod tests {
         }
 
         let found = db
-            .get_chat_id_by_channel_and_title("web", "legacy-session")
+            .get_chat_id_by_channel_and_title(None, "web", "legacy-session")
             .unwrap();
         assert_eq!(found, Some(target));
 

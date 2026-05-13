@@ -99,7 +99,7 @@ fn multi_user_chat_memory_usage_isolation() {
     assert_eq!(bob_usage.input_tokens, 1000);
     assert_eq!(bob_usage.output_tokens, 500);
 
-    let chats = db.get_recent_chats(100).unwrap();
+    let chats = db.get_recent_chats(None, 100).unwrap();
     assert!(chats.iter().any(|c| c.chat_id == alice_chat));
     assert!(chats.iter().any(|c| c.chat_id == bob_chat));
 

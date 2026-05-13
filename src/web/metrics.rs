@@ -300,7 +300,14 @@ pub(super) async fn api_subagents_observability(
         None
     } else {
         let session_key = normalize_session_key(query.session_key.as_deref());
-        let cid = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+        let resolve_filter = if identity.is_operator() {
+            None
+        } else {
+            Some(extract_user_id(&headers)?)
+        };
+        let cid =
+            resolve_chat_id_for_session_key_read(&state, &session_key, resolve_filter.as_deref())
+                .await?;
         assert_chat_visible_to_caller(&state, &identity, &headers, cid).await?;
         Some(cid)
     };

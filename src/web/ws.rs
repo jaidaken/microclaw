@@ -733,7 +733,7 @@ async fn handle_request_frame(
                 }
             };
             let session_key = normalize_session_key(Some(&params.session_key));
-            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key).await {
+            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key, Some(user_id)).await {
                 Ok(chat_id) => chat_id,
                 Err((_, msg)) => {
                     let _ = send_error_response(sender, &id, "NOT_FOUND", &msg).await;
@@ -798,7 +798,7 @@ async fn handle_request_frame(
             let session_key = normalize_session_key(Some(&params.session_key));
 
             // Resolve session_key to (channel, chat_id) for run_control
-            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key).await {
+            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key, Some(user_id)).await {
                 Ok(id) => id,
                 Err((_, msg)) => {
                     let _ = send_error_response(sender, &id, "NOT_FOUND", &msg).await;
@@ -926,8 +926,9 @@ async fn handle_request_frame(
                 }
             };
 
-            let chats = match call_blocking(state.app_state.db.clone(), |db| {
-                db.get_recent_chats(400)
+            let user_filter = user_id.to_string();
+            let chats = match call_blocking(state.app_state.db.clone(), move |db| {
+                db.get_recent_chats(Some(&user_filter), 400)
             })
             .await
             {
@@ -1002,7 +1003,7 @@ async fn handle_request_frame(
                 }
             };
             let session_key = normalize_session_key(Some(&params.session_key));
-            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key).await {
+            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key, Some(user_id)).await {
                 Ok(chat_id) => chat_id,
                 Err((_, msg)) => {
                     let _ = send_error_response(sender, &id, "NOT_FOUND", &msg).await;
@@ -1145,7 +1146,7 @@ async fn handle_request_frame(
                 }
             };
             let session_key = normalize_session_key(Some(&params.session_key));
-            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key).await {
+            let chat_id = match resolve_chat_id_for_session_key_read(state, &session_key, Some(user_id)).await {
                 Ok(chat_id) => chat_id,
                 Err((_, msg)) => {
                     let _ = send_error_response(sender, &id, "NOT_FOUND", &msg).await;

@@ -74,11 +74,18 @@ pub(super) async fn api_sessions(
     State(state): State<WebState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
 
-    let chats = call_blocking(state.app_state.db.clone(), |db| db.get_recent_chats(400))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let user_filter = if identity.is_operator() {
+        None
+    } else {
+        Some(extract_user_id(&headers)?)
+    };
+    let chats = call_blocking(state.app_state.db.clone(), move |db| {
+        db.get_recent_chats(user_filter.as_deref(), 400)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let sessions = chats
         .into_iter()
@@ -111,10 +118,18 @@ pub(super) async fn api_history(
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
 
     let session_key = normalize_session_key(query.session_key.as_deref());
-    let chat_id = resolve_chat_id_for_session_key_read(&state, &session_key).await?;
+    let resolve_filter = if identity.is_operator() {
+        None
+    } else {
+        Some(extract_user_id(&headers)?)
+    };
+    let chat_id =
+        resolve_chat_id_for_session_key_read(&state, &session_key, resolve_filter.as_deref())
+            .await?;
+    assert_chat_visible_to_caller(&state, &identity, &headers, chat_id).await?;
 
     let mut messages = call_blocking(state.app_state.db.clone(), move |db| {
         db.get_all_messages(chat_id)
