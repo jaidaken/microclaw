@@ -34,6 +34,7 @@ pub(super) struct SkillToggleResponse {
 #[utoipa::path(
     get,
     path = "/api/skills",
+    description = "Lists every discovered skill with its availability status, source, version, supported platforms, and unavailability reason",
     operation_id = "skills_list",
     tag = "skills",
     responses(
@@ -72,6 +73,7 @@ pub(super) async fn api_list_skills(
 #[utoipa::path(
     post,
     path = "/api/skills/{name}/enable",
+    description = "Enables a skill by name; takes effect on the next agent turn",
     operation_id = "skills_enable",
     tag = "skills",
     params(
@@ -111,6 +113,7 @@ pub(super) async fn api_enable_skill(
 #[utoipa::path(
     post,
     path = "/api/skills/{name}/disable",
+    description = "Disables a skill by name; takes effect on the next agent turn",
     operation_id = "skills_disable",
     tag = "skills",
     params(

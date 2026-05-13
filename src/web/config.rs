@@ -190,6 +190,7 @@ fn merge_yaml_value(
 #[utoipa::path(
     get,
     path = "/api/config",
+    description = "Returns the current runtime config (secrets redacted) with the on-disk save path and discovered soul files",
     operation_id = "system_config_get",
     tag = "system",
     responses(
@@ -221,6 +222,7 @@ pub(super) async fn api_get_config(
 #[utoipa::path(
     get,
     path = "/api/config/self_check",
+    description = "Runs configuration validation and returns security posture, risk level, and structured warnings about risky settings",
     operation_id = "system_config_self_check",
     tag = "system",
     responses(
@@ -754,6 +756,7 @@ fn default_mount_allowlist_path() -> Option<std::path::PathBuf> {
 #[utoipa::path(
     put,
     path = "/api/config",
+    description = "Persists a partial config update to disk preserving comments and redacted secrets; restart required to apply most options",
     operation_id = "system_config_update",
     tag = "system",
     request_body(content_type = "application/json", description = "Partial UpdateConfigRequest payload. All fields optional. Secrets sent as '***' are preserved."),

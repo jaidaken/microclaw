@@ -59,6 +59,7 @@ pub(super) struct SessionTreeResponse {
 #[utoipa::path(
     get,
     path = "/api/sessions",
+    description = "Lists recent chat sessions across all channels with last-message previews and timestamps",
     operation_id = "sessions_list",
     tag = "sessions",
     responses(
@@ -89,6 +90,7 @@ pub(super) async fn api_sessions(
 #[utoipa::path(
     get,
     path = "/api/history",
+    description = "Returns the stored message history for a chat session, optionally tail-limited to the newest N messages",
     operation_id = "sessions_history",
     tag = "sessions",
     params(
@@ -148,6 +150,7 @@ pub(super) async fn api_history(
 #[utoipa::path(
     post,
     path = "/api/reset",
+    description = "Clears session state for a chat while keeping scheduled tasks intact; clears the TODO store for the channel",
     operation_id = "sessions_reset",
     tag = "sessions",
     request_body(content_type = "application/json", description = "Request body: { session_key?: string }"),
@@ -230,6 +233,7 @@ pub(super) async fn api_reset(
 #[utoipa::path(
     post,
     path = "/api/delete_session",
+    description = "Deletes a chat session and all associated message history; clears the TODO store for the channel",
     operation_id = "sessions_delete",
     tag = "sessions",
     request_body(content_type = "application/json", description = "Request body: { session_key?: string }"),
@@ -285,6 +289,7 @@ pub(super) async fn api_delete_session(
 #[utoipa::path(
     post,
     path = "/api/sessions/fork",
+    description = "Creates a new web session forked from an existing session, optionally truncated at a fork-point message index",
     operation_id = "sessions_fork",
     tag = "sessions",
     request_body(content_type = "application/json", description = "Request body: { source_session_key: string, target_session_key?: string, fork_point?: number }"),
@@ -411,6 +416,7 @@ pub(super) async fn api_sessions_fork(
 #[utoipa::path(
     get,
     path = "/api/sessions/tree",
+    description = "Returns the fork lineage tree across sessions: each node carries its parent session key, fork point, and last update time",
     operation_id = "sessions_tree",
     tag = "sessions",
     params(

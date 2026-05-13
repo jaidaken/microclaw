@@ -1206,6 +1206,7 @@ async fn index() -> impl IntoResponse {
 #[utoipa::path(
     get,
     path = "/",
+    description = "Serves the microclaw web UI HTML index or upgrades to the WebSocket protocol depending on the request headers",
     operation_id = "system_index_or_ws",
     tag = "system",
     responses(
@@ -1232,6 +1233,7 @@ async fn index_or_ws(
 #[utoipa::path(
     get,
     path = "/api/health",
+    description = "Returns the authenticated health snapshot with scheduler, reflector, and memory backend status",
     operation_id = "system_health",
     tag = "system",
     responses(
@@ -1566,6 +1568,7 @@ async fn resolve_chat_id_for_session_key(
 #[utoipa::path(
     get,
     path = "/api/usage",
+    description = "Returns the token usage report with optional date filtering",
     operation_id = "system_usage",
     tag = "system",
     params(UsageQuery),
@@ -1619,6 +1622,7 @@ async fn api_usage(
 #[utoipa::path(
     get,
     path = "/api/memory_observability",
+    description = "Returns memory reflector runs and injection log entries for observability",
     operation_id = "memory_observability",
     tag = "memory",
     params(MemoryObservabilityQuery),
@@ -1727,6 +1731,7 @@ async fn api_memory_observability(
 #[utoipa::path(
     post,
     path = "/api/send",
+    description = "Sends a message in non-streaming mode; blocks until the agent completes its turn",
     operation_id = "chat_send",
     tag = "chat",
     request_body = SendRequest,
@@ -1785,6 +1790,7 @@ async fn api_send(
 #[utoipa::path(
     post,
     path = "/api/hooks/agent",
+    description = "Generic hook entry point for agent-side automation calls",
     operation_id = "system_hook_agent",
     tag = "system",
     request_body = HookAgentRequest,
@@ -1818,6 +1824,7 @@ async fn api_hook_agent(
 #[utoipa::path(
     post,
     path = "/api/hooks/wake",
+    description = "Schedules or immediately dispatches an agent wake event with the supplied payload",
     operation_id = "system_hook_wake",
     tag = "system",
     request_body = HookWakeRequest,
@@ -2048,6 +2055,7 @@ async fn send_and_store_response_with_events(
 #[utoipa::path(
     get,
     path = "/api/audit",
+    description = "Returns the audit log feed; admin scope required",
     operation_id = "system_audit_logs",
     tag = "system",
     params(AuditQuery),

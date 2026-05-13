@@ -94,6 +94,7 @@ pub(super) struct AuthCreatedApiKey {
 #[utoipa::path(
     get,
     path = "/api/auth/status",
+    description = "Returns whether operator authentication is configured and whether the current request is authenticated",
     operation_id = "auth_status",
     tag = "auth",
     responses(
@@ -128,6 +129,7 @@ pub(super) async fn api_auth_status(
 #[utoipa::path(
     post,
     path = "/api/auth/password",
+    description = "Sets or replaces the operator login password (bootstrap operation requiring a bootstrap token or operator.admin scope)",
     operation_id = "auth_set_password",
     tag = "auth",
     request_body = AuthSetPasswordRequest,
@@ -200,6 +202,7 @@ pub(super) async fn api_auth_set_password(
 #[utoipa::path(
     post,
     path = "/api/auth/login",
+    description = "Exchanges the operator password for a session cookie plus CSRF token; rate-limited per client",
     operation_id = "auth_login",
     tag = "auth",
     request_body = AuthLoginRequest,
@@ -304,6 +307,7 @@ pub(super) async fn api_auth_login(
 #[utoipa::path(
     post,
     path = "/api/auth/logout",
+    description = "Invalidates the current operator session and clears the session and CSRF cookies",
     operation_id = "auth_logout",
     tag = "auth",
     responses(
@@ -334,6 +338,7 @@ pub(super) async fn api_auth_logout(
 #[utoipa::path(
     get,
     path = "/api/auth/api_keys",
+    description = "Lists every issued operator API key with its scopes, prefixes, and last-used timestamps; requires operator.admin scope",
     operation_id = "auth_list_api_keys",
     tag = "auth",
     responses(
@@ -372,6 +377,7 @@ pub(super) async fn api_auth_api_keys(
 #[utoipa::path(
     post,
     path = "/api/auth/api_keys",
+    description = "Issues a new operator API key with the requested scopes; the raw secret is returned exactly once and is not retrievable later",
     operation_id = "auth_create_api_key",
     tag = "auth",
     request_body = AuthCreateApiKeyRequest,
@@ -446,6 +452,7 @@ pub(super) async fn api_auth_create_api_key(
 #[utoipa::path(
     delete,
     path = "/api/auth/api_keys/{id}",
+    description = "Revokes the API key by id; subsequent requests using that key fail with 401",
     operation_id = "auth_revoke_api_key",
     tag = "auth",
     params(("id" = i64, Path, description = "API key id")),
@@ -484,6 +491,7 @@ pub(super) async fn api_auth_revoke_api_key(
 #[utoipa::path(
     post,
     path = "/api/auth/api_keys/{id}/rotate",
+    description = "Rotates the API key secret; the previous secret stops working immediately and the new secret is returned once",
     operation_id = "auth_rotate_api_key",
     tag = "auth",
     params(("id" = i64, Path, description = "API key id to rotate")),

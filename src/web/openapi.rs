@@ -42,6 +42,7 @@ pub(super) struct HealthRoot {
 #[utoipa::path(
     get,
     path = "/health",
+    description = "Returns the unauthenticated minimal health snapshot for load balancers and external probes",
     operation_id = "system_health_root",
     tag = "system",
     responses(

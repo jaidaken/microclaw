@@ -4,6 +4,7 @@ use futures_util::FutureExt;
 #[utoipa::path(
     post,
     path = "/api/send_stream",
+    description = "Starts a new chat turn and returns a run id immediately; the actual response streams on /api/stream",
     operation_id = "stream_send",
     tag = "stream",
     request_body = SendRequest,
@@ -364,6 +365,7 @@ async fn start_stream_run_internal(
 #[utoipa::path(
     get,
     path = "/api/stream",
+    description = "SSE stream of agent events for an active run; supports Last-Event-ID for resume",
     operation_id = "stream_subscribe",
     tag = "stream",
     params(StreamQuery),
@@ -473,6 +475,7 @@ pub(super) async fn api_stream(
 #[utoipa::path(
     get,
     path = "/api/run_status",
+    description = "Returns the current status (running, completed, failed, aborted) of a chat run by id",
     operation_id = "stream_run_status",
     tag = "stream",
     params(RunStatusQuery),

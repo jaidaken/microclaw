@@ -69,6 +69,7 @@ fn a2a_token_allowed(config: &Config, headers: &HeaderMap) -> bool {
 #[utoipa::path(
     get,
     path = "/api/a2a/agent-card",
+    description = "Returns the agent-to-agent protocol capability card describing this microclaw instance",
     operation_id = "a2a_agent_card",
     tag = "a2a",
     responses(
@@ -89,6 +90,7 @@ pub(super) async fn api_a2a_agent_card(
 #[utoipa::path(
     post,
     path = "/api/a2a/message",
+    description = "Receives and processes an A2A message from another agent",
     operation_id = "a2a_message_send",
     tag = "a2a",
     request_body = A2AMessageRequestSchema,

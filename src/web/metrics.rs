@@ -55,6 +55,7 @@ pub(super) struct SubagentObservabilityResponse {
 #[utoipa::path(
     get,
     path = "/api/metrics",
+    description = "Returns the current process and runtime metrics snapshot",
     operation_id = "metrics_snapshot",
     tag = "metrics",
     responses(
@@ -99,6 +100,7 @@ pub(super) async fn api_metrics(
 #[utoipa::path(
     get,
     path = "/api/metrics/summary",
+    description = "Returns a rolled-up metrics summary with SLO health and recent trend indicators",
     operation_id = "metrics_summary",
     tag = "metrics",
     responses(
@@ -212,6 +214,7 @@ pub(super) async fn api_metrics_summary(
 #[utoipa::path(
     get,
     path = "/api/metrics/history",
+    description = "Returns a time-series of metrics points over the requested minutes window",
     operation_id = "metrics_history",
     tag = "metrics",
     params(MetricsHistoryQueryParams),
@@ -261,6 +264,7 @@ pub(super) async fn api_metrics_history(
 #[utoipa::path(
     get,
     path = "/api/subagents/observability",
+    description = "Returns observability data for subagent runs including recent completions and failure rates",
     operation_id = "metrics_subagents_observability",
     tag = "metrics",
     params(SubagentObservabilityQuery),
