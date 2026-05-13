@@ -370,13 +370,16 @@ pub(super) async fn api_ws(
 ) -> impl IntoResponse {
     metrics_http_inc(&state).await;
     let client_key = client_key_from_headers_with_config(&headers, &state.app_state.config);
-    // M1.5: optional on upgrade; fall back to bootstrap so existing clients keep working.
-    let user_id = super::extract_user_id(&headers)
-        .unwrap_or_else(|_| microclaw_core::tenant::bootstrap_user_id());
-    ws.on_upgrade(move |socket| handle_ws_socket(state, socket, client_key, user_id))
+    let claimed_user_id = super::extract_user_id(&headers).ok();
+    ws.on_upgrade(move |socket| handle_ws_socket(state, socket, client_key, claimed_user_id))
 }
 
-async fn handle_ws_socket(state: WebState, socket: WebSocket, client_key: String, user_id: String) {
+async fn handle_ws_socket(
+    state: WebState,
+    socket: WebSocket,
+    client_key: String,
+    claimed_user_id: Option<String>,
+) {
     let conn_id = uuid::Uuid::new_v4().to_string();
     let (sender, mut receiver) = socket.split();
     let sender = std::sync::Arc::new(TokioMutex::new(sender));
@@ -413,6 +416,25 @@ async fn handle_ws_socket(state: WebState, socket: WebSocket, client_key: String
             Some(v) => v,
             None => return,
         };
+
+    // Operator keys may claim any header user_id; member keys cannot until per-key user binding lands.
+    let user_id = if identity.is_operator() {
+        claimed_user_id.unwrap_or_else(microclaw_core::tenant::bootstrap_user_id)
+    } else {
+        match claimed_user_id {
+            Some(_) => {
+                let _ = send_error_response(
+                    &sender,
+                    "connect",
+                    "FORBIDDEN",
+                    "member keys cannot claim X-Clawchat-User-Id on the WS upgrade",
+                )
+                .await;
+                return;
+            }
+            None => microclaw_core::tenant::bootstrap_user_id(),
+        }
+    };
 
     let tick_sender = sender.clone();
     tokio::spawn(async move {
