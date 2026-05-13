@@ -744,6 +744,7 @@ mod tests {
         let auth = ToolAuthContext {
             caller_channel: "web".into(),
             caller_chat_id: 1,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };
@@ -781,6 +782,7 @@ mod tests {
         let auth = ToolAuthContext {
             caller_channel: "telegram".into(),
             caller_chat_id: 123,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![123],
             env_files: vec![],
         };
@@ -816,6 +818,7 @@ mod tests {
         let auth = ToolAuthContext {
             caller_channel: "web".into(),
             caller_chat_id: 1,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };
@@ -842,6 +845,7 @@ mod tests {
         let auth = ToolAuthContext {
             caller_channel: "telegram".into(),
             caller_chat_id: 123,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![123],
             env_files: vec![],
         };
@@ -865,6 +869,7 @@ mod tests {
         let auth = ToolAuthContext {
             caller_channel: "web".into(),
             caller_chat_id: 1,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };
@@ -916,6 +921,7 @@ tools:
         let auth = ToolAuthContext {
             caller_channel: "web".into(),
             caller_chat_id: 7,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };
@@ -946,6 +952,7 @@ tools:
         let auth = ToolAuthContext {
             caller_channel: "feishu".into(),
             caller_chat_id: 8009499081,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };
@@ -976,6 +983,7 @@ tools:
         let auth = ToolAuthContext {
             caller_channel: "feishu".into(),
             caller_chat_id: 8009499081,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };
@@ -1006,6 +1014,7 @@ tools:
         let auth = ToolAuthContext {
             caller_channel: "web".into(),
             caller_chat_id: 9001,
+            user_id: microclaw_core::tenant::bootstrap_user_id(),
             control_chat_ids: vec![],
             env_files: vec![],
         };

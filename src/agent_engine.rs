@@ -659,9 +659,14 @@ async fn process_with_agent_logic(
         "Agent request started"
     );
 
-    if let Some(reply) =
-        maybe_handle_explicit_memory_command(state, chat_id, override_prompt, image_data.clone())
-            .await?
+    if let Some(reply) = maybe_handle_explicit_memory_command(
+        state,
+        &context.user_id,
+        chat_id,
+        override_prompt,
+        image_data.clone(),
+    )
+    .await?
     {
         info!(
             chat_id,
@@ -796,6 +801,7 @@ async fn process_with_agent_logic(
         &state.memory_backend,
         &state.db,
         state.embedding.as_ref(),
+        &context.user_id,
         chat_id,
         &query,
         state.config.memory_token_budget,
@@ -884,6 +890,7 @@ async fn process_with_agent_logic(
             state,
             context.caller_channel,
             chat_id,
+            &context.user_id,
             &messages,
             state.config.compact_keep_recent,
         )
@@ -920,6 +927,7 @@ async fn process_with_agent_logic(
     let mut tool_auth = ToolAuthContext {
         caller_channel: context.caller_channel.to_string(),
         caller_chat_id: chat_id,
+        user_id: context.user_id.to_string(),
         control_chat_ids: state.config.control_chat_ids.clone(),
         env_files: skill_env_files.clone(),
     };
@@ -1161,9 +1169,10 @@ async fn process_with_agent_logic(
             let model = effective_model.clone();
             let input_tokens = i64::from(usage.input_tokens);
             let output_tokens = i64::from(usage.output_tokens);
+            let user_id_for_usage = context.user_id.to_string();
             let _ = call_blocking(state.db.clone(), move |db| {
                 db.log_llm_usage(
-                    &microclaw_core::tenant::bootstrap_user_id(),
+                    &user_id_for_usage,
                     chat_id,
                     &channel,
                     &provider,
@@ -2486,6 +2495,7 @@ async fn compact_messages(
     state: &AppState,
     caller_channel: &str,
     chat_id: i64,
+    user_id: &str,
     messages: &[Message],
     keep_recent: usize,
 ) -> Vec<Message> {
@@ -2563,9 +2573,10 @@ async fn compact_messages(
                 let model = effective_model.clone();
                 let input_tokens = i64::from(usage.input_tokens);
                 let output_tokens = i64::from(usage.output_tokens);
+                let user_id_for_usage = user_id.to_string();
                 let _ = call_blocking(state.db.clone(), move |db| {
                     db.log_llm_usage(
-                        &microclaw_core::tenant::bootstrap_user_id(),
+                        &user_id_for_usage,
                         chat_id,
                         &channel,
                         &provider,
@@ -2937,9 +2948,19 @@ mod tests {
             .unwrap();
 
         let memory_backend = Arc::new(crate::memory_backend::MemoryBackend::local_only(db.clone()));
-        let context =
-            build_db_memory_context(&memory_backend, &db, None, 100, "short", 20, 20, 30, 30.0)
-                .await;
+        let context = build_db_memory_context(
+            &memory_backend,
+            &db,
+            None,
+            &microclaw_core::tenant::bootstrap_user_id(),
+            100,
+            "short",
+            20,
+            20,
+            30,
+            30.0,
+        )
+        .await;
         assert!(context.contains("<structured_memories>"));
         // With a tiny budget (20 tokens), not all memories fit — some are available via deep search
         assert!(
@@ -2964,6 +2985,7 @@ mod tests {
             &memory_backend,
             &db,
             None,
+            &microclaw_core::tenant::bootstrap_user_id(),
             100,
             "likes",
             10_000,
@@ -2992,6 +3014,7 @@ mod tests {
             &memory_backend,
             &db,
             None,
+            &microclaw_core::tenant::bootstrap_user_id(),
             100,
             "喜欢 咖啡",
             10_000,
@@ -3086,6 +3109,7 @@ mod tests {
                 &restarted.memory_backend,
                 &restarted.db,
                 None,
+                &microclaw_core::tenant::bootstrap_user_id(),
                 chat_id,
                 "database port",
                 1500,

@@ -1290,6 +1290,7 @@ async fn handle_slack_message(
             let auth = ToolAuthContext {
                 caller_channel: runtime.channel_name.clone(),
                 caller_chat_id: chat_id,
+                user_id: microclaw_core::tenant::bootstrap_user_id(),
                 control_chat_ids: app_state.config.control_chat_ids.clone(),
                 env_files: Vec::new(),
             };

@@ -4168,21 +4168,23 @@ impl Database {
     /// Returns the number of memories archived.
     pub fn archive_excess_memories(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         max_entries: usize,
     ) -> Result<usize, MicroClawError> {
         let conn = self.lock_conn();
-        // rusqlite 0.39 dropped usize: FromSql/ToSql, sqlite is i64 native.
         let count: i64 = if let Some(cid) = chat_id {
             conn.query_row(
-                "SELECT COUNT(*) FROM memories WHERE is_archived = 0 AND chat_id = ?1",
-                params![cid],
+                "SELECT COUNT(*) FROM memories
+                 WHERE is_archived = 0 AND user_id = ?1 AND chat_id = ?2",
+                params![user_id, cid],
                 |row| row.get(0),
             )?
         } else {
             conn.query_row(
-                "SELECT COUNT(*) FROM memories WHERE is_archived = 0 AND chat_id IS NULL",
-                [],
+                "SELECT COUNT(*) FROM memories
+                 WHERE is_archived = 0 AND user_id = ?1 AND chat_id IS NULL",
+                params![user_id],
                 |row| row.get(0),
             )?
         };
@@ -4195,28 +4197,37 @@ impl Database {
         let rows = if let Some(cid) = chat_id {
             conn.execute(
                 "UPDATE memories SET is_archived = 1, archived_at = ?1, updated_at = ?1
-                 WHERE is_archived = 0 AND chat_id = ?2
+                 WHERE is_archived = 0 AND user_id = ?4 AND chat_id = ?2
                    AND id IN (
                      SELECT id FROM memories
-                     WHERE is_archived = 0 AND chat_id = ?2
+                     WHERE is_archived = 0 AND user_id = ?4 AND chat_id = ?2
                      ORDER BY confidence ASC, COALESCE(last_seen_at, updated_at, created_at) ASC
                      LIMIT ?3
                    )",
-                params![now, cid, excess],
+                params![now, cid, excess, user_id],
             )?
         } else {
             conn.execute(
                 "UPDATE memories SET is_archived = 1, archived_at = ?1, updated_at = ?1
-                 WHERE is_archived = 0 AND chat_id IS NULL
+                 WHERE is_archived = 0 AND user_id = ?3 AND chat_id IS NULL
                    AND id IN (
                      SELECT id FROM memories
-                     WHERE is_archived = 0 AND chat_id IS NULL
+                     WHERE is_archived = 0 AND user_id = ?3 AND chat_id IS NULL
                      ORDER BY confidence ASC, COALESCE(last_seen_at, updated_at, created_at) ASC
                      LIMIT ?2
                    )",
-                params![now, excess],
+                params![now, excess, user_id],
             )?
         };
+        Ok(rows)
+    }
+
+    pub fn list_distinct_chat_user_ids(&self) -> Result<Vec<String>, MicroClawError> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare("SELECT DISTINCT user_id FROM chats")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 

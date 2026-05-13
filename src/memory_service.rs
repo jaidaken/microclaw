@@ -180,6 +180,7 @@ async fn upsert_memory_embedding_with_provider(
 
 pub(crate) async fn maybe_handle_explicit_memory_command(
     state: &AppState,
+    user_id: &str,
     chat_id: i64,
     override_prompt: Option<&str>,
     image_data: Option<(String, String)>,
@@ -266,7 +267,7 @@ pub(crate) async fn maybe_handle_explicit_memory_command(
     let inserted_id = state
         .memory_backend
         .insert_memory_with_metadata(
-            &microclaw_core::tenant::bootstrap_user_id(),
+            user_id,
             Some(chat_id),
             &content_for_insert,
             "KNOWLEDGE",
@@ -394,6 +395,7 @@ pub(crate) async fn build_db_memory_context(
     memory_backend: &Arc<MemoryBackend>,
     db: &Arc<Database>,
     embedding: Option<&Arc<dyn EmbeddingProvider>>,
+    user_id: &str,
     chat_id: i64,
     query: &str,
     token_budget: usize,
@@ -402,7 +404,10 @@ pub(crate) async fn build_db_memory_context(
     recency_half_life_days: f64,
 ) -> String {
     let query = &sanitize_memory_query(query);
-    let memories = match memory_backend.get_memories_for_context(&microclaw_core::tenant::bootstrap_user_id(), chat_id, 100).await {
+    let memories = match memory_backend
+        .get_memories_for_context(user_id, chat_id, 100)
+        .await
+    {
         Ok(m) => m,
         Err(_) => return String::new(),
     };
@@ -606,6 +611,7 @@ pub(crate) async fn build_db_memory_context(
 
 pub(crate) async fn apply_reflector_extractions(
     state: &Arc<AppState>,
+    user_id: &str,
     chat_id: i64,
     existing: &[Memory],
     extracted: &[serde_json::Value],
@@ -791,7 +797,14 @@ pub(crate) async fn apply_reflector_extractions(
         let category = category.to_string();
         let inserted_id = state
             .memory_backend
-            .insert_memory_with_metadata(&microclaw_core::tenant::bootstrap_user_id(), Some(chat_id), &db_content, &category, "reflector", 0.68)
+            .insert_memory_with_metadata(
+                user_id,
+                Some(chat_id),
+                &db_content,
+                &category,
+                "reflector",
+                0.68,
+            )
             .await
             .ok();
         if let Some(memory_id) = inserted_id {

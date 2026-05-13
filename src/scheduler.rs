@@ -603,20 +603,27 @@ async fn run_reflector(state: &Arc<AppState>) {
         .await;
     }
 
-    // Enforce global memory capacity limit
+    // Enforce per-user global memory capacity limit
     if state.config.memory_max_global_entries > 0 {
         let max_global = state.config.memory_max_global_entries;
-        let _ = call_blocking(state.db.clone(), move |db| {
-            let archived = db.archive_excess_memories(None, max_global)?;
-            if archived > 0 {
-                info!(
-                    "Reflector: archived {} excess global memories (limit: {})",
-                    archived, max_global
-                );
-            }
-            Ok(())
-        })
-        .await;
+        let users = call_blocking(state.db.clone(), |db| db.list_distinct_chat_user_ids())
+            .await
+            .unwrap_or_default();
+        for owner in users {
+            let owner_for_archive = owner.clone();
+            let _ = call_blocking(state.db.clone(), move |db| {
+                let archived =
+                    db.archive_excess_memories(&owner_for_archive, None, max_global)?;
+                if archived > 0 {
+                    info!(
+                        "Reflector: archived {} excess global memories for user {} (limit: {})",
+                        archived, owner_for_archive, max_global
+                    );
+                }
+                Ok(())
+            })
+            .await;
+        }
     }
 
     let lookback_secs = (state.config.reflector_interval_mins * 2 * 60) as i64;
@@ -648,7 +655,21 @@ async fn run_reflector(state: &Arc<AppState>) {
 
 async fn reflect_for_chat(state: &Arc<AppState>, chat_id: i64) {
     let started_at = Utc::now().to_rfc3339();
-    // 1. Get message cursor for incremental reflection
+    let chat_user_id =
+        match call_blocking(state.db.clone(), move |db| db.get_chat_user_id(chat_id)).await {
+            Ok(Some(u)) => u,
+            Ok(None) => {
+                warn!(
+                    chat_id,
+                    "reflect_for_chat: chat owner unknown; skipping reflector cycle"
+                );
+                return;
+            }
+            Err(e) => {
+                warn!(chat_id, error = %e, "reflect_for_chat: chat owner lookup failed; skipping");
+                return;
+            }
+        };
     let cursor =
         match call_blocking(state.db.clone(), move |db| db.get_reflector_cursor(chat_id)).await {
             Ok(c) => c,
@@ -881,7 +902,8 @@ async fn reflect_for_chat(state: &Arc<AppState>, chat_id: i64) {
         extracted
     };
 
-    let outcome = apply_reflector_extractions(state, chat_id, &existing, &extracted).await;
+    let outcome =
+        apply_reflector_extractions(state, &chat_user_id, chat_id, &existing, &extracted).await;
     let inserted = outcome.inserted;
     let updated = outcome.updated;
     let skipped = outcome.skipped;
@@ -937,11 +959,16 @@ async fn reflect_for_chat(state: &Arc<AppState>, chat_id: i64) {
         .await;
     }
 
-    // 11. Enforce memory capacity limits — archive excess low-confidence memories
+    // 11. Enforce memory capacity limits, archive excess low-confidence memories
     if state.config.memory_max_entries_per_chat > 0 {
         let max_per_chat = state.config.memory_max_entries_per_chat;
+        let chat_user_id_for_archive = chat_user_id.clone();
         let _ = call_blocking(state.db.clone(), move |db| {
-            let archived = db.archive_excess_memories(Some(chat_id), max_per_chat)?;
+            let archived = db.archive_excess_memories(
+                &chat_user_id_for_archive,
+                Some(chat_id),
+                max_per_chat,
+            )?;
             if archived > 0 {
                 info!(
                     "Reflector: archived {} excess memories for chat {} (limit: {})",

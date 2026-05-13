@@ -1020,6 +1020,7 @@ async fn handle_message(
             let auth = ToolAuthContext {
                 caller_channel: tg_channel_name.clone(),
                 caller_chat_id: chat_id,
+                user_id: microclaw_core::tenant::bootstrap_user_id(),
                 control_chat_ids: state.config.control_chat_ids.clone(),
                 env_files: Vec::new(),
             };

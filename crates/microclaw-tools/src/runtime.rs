@@ -211,6 +211,7 @@ pub fn validate_execution_policy(
 pub struct ToolAuthContext {
     pub caller_channel: String,
     pub caller_chat_id: i64,
+    pub user_id: String,
     pub control_chat_ids: Vec<i64>,
     pub env_files: Vec<String>,
 }
@@ -235,6 +236,11 @@ pub fn auth_context_from_input(input: &serde_json::Value) -> Option<ToolAuthCont
         .unwrap_or("telegram")
         .to_string();
     let caller_chat_id = ctx.get("caller_chat_id")?.as_i64()?;
+    let user_id = ctx
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_default();
     let control_chat_ids = ctx
         .get("control_chat_ids")
         .and_then(|v| v.as_array())
@@ -252,6 +258,7 @@ pub fn auth_context_from_input(input: &serde_json::Value) -> Option<ToolAuthCont
     Some(ToolAuthContext {
         caller_channel,
         caller_chat_id,
+        user_id,
         control_chat_ids,
         env_files,
     })
@@ -277,6 +284,7 @@ pub fn inject_auth_context(input: serde_json::Value, auth: &ToolAuthContext) -> 
     let mut auth_val = json!({
         "caller_channel": auth.caller_channel,
         "caller_chat_id": auth.caller_chat_id,
+        "user_id": auth.user_id,
         "control_chat_ids": auth.control_chat_ids,
     });
     if !auth.env_files.is_empty() {

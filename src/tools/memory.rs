@@ -325,10 +325,14 @@ impl Tool for WriteMemoryTool {
                     {
                         if memory_quality::memory_quality_ok(&normalized) {
                             let chat_id = memory_chat_id;
+                            let user_id_for_write = auth_context_from_input(&input)
+                                .map(|a| a.user_id)
+                                .filter(|u| !u.is_empty())
+                                .unwrap_or_else(microclaw_core::tenant::bootstrap_user_id);
                             if let Ok(memory_id) = self
                                 .memory_backend
                                 .insert_memory_with_metadata(
-                                    &microclaw_core::tenant::bootstrap_user_id(),
+                                    &user_id_for_write,
                                     chat_id,
                                     &normalized,
                                     "KNOWLEDGE",

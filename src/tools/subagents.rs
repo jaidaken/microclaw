@@ -360,9 +360,14 @@ async fn run_sub_agent_task(
             let provider = config.llm_provider.clone();
             let model = config.model.clone();
             let chat_id = auth_context.caller_chat_id;
+            let user_id_for_usage = if auth_context.user_id.is_empty() {
+                microclaw_core::tenant::bootstrap_user_id()
+            } else {
+                auth_context.user_id.clone()
+            };
             let _ = call_blocking(db.clone(), move |db| {
                 db.log_llm_usage(
-                    &microclaw_core::tenant::bootstrap_user_id(),
+                    &user_id_for_usage,
                     chat_id,
                     &channel,
                     &provider,
@@ -866,6 +871,7 @@ impl Tool for SessionsSpawnTool {
         let auth_async = ToolAuthContext {
             caller_channel: auth.caller_channel.clone(),
             caller_chat_id: chat_id,
+            user_id: auth.user_id.clone(),
             control_chat_ids: auth.control_chat_ids.clone(),
             env_files: auth.env_files.clone(),
         };
