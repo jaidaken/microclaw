@@ -67,6 +67,7 @@ chrono-tz = "0.10"
 iana-time-zone = "0.1"
 zip = "8"
 sha2 = "0.11"
+subtle = "2.6"
 hex = "0.4"
 md5 = "0.8"
 axum = { version = "0.8", features = ["ws"] }

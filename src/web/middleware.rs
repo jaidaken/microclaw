@@ -261,11 +261,7 @@ pub(super) async fn assert_chat_visible_to_caller(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     match owner {
         Some(o) if o == caller => Ok(()),
-        Some(_) => Err((
-            StatusCode::FORBIDDEN,
-            "forbidden: chat does not belong to caller".into(),
-        )),
-        None => Err((StatusCode::NOT_FOUND, "session not found".into())),
+        _ => Err((StatusCode::NOT_FOUND, "session not found".into())),
     }
 }
 

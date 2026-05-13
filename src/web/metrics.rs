@@ -70,7 +70,7 @@ pub(super) async fn api_metrics(
     State(state): State<WebState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    require_scope(&state, &headers, AuthScope::Operator).await?;
     persist_metrics_snapshot(&state).await?;
 
     let snapshot = state.metrics.lock().await.clone();
@@ -115,7 +115,7 @@ pub(super) async fn api_metrics_summary(
     State(state): State<WebState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    require_scope(&state, &headers, AuthScope::Operator).await?;
     persist_metrics_snapshot(&state).await?;
 
     let snapshot = state.metrics.lock().await.clone();
