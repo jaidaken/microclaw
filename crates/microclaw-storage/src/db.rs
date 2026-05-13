@@ -1095,7 +1095,11 @@ fn apply_schema_migrations(conn: &Connection) -> Result<(), MicroClawError> {
              ALTER TABLE chats_v26 RENAME TO chats;
              CREATE INDEX idx_chats_user_id ON chats(user_id);
              CREATE INDEX idx_chats_user_last_msg
-                 ON chats(user_id, last_message_time DESC);",
+                 ON chats(user_id, last_message_time DESC);
+             CREATE INDEX idx_chats_channel_external
+                 ON chats(channel, external_chat_id);
+             CREATE INDEX idx_chats_channel_title
+                 ON chats(channel, chat_title);",
         )?;
 
         conn.execute_batch(
@@ -1114,7 +1118,10 @@ fn apply_schema_migrations(conn: &Connection) -> Result<(), MicroClawError> {
                 is_archived INTEGER NOT NULL DEFAULT 0,
                 archived_at TEXT,
                 chat_channel TEXT,
-                external_chat_id TEXT
+                external_chat_id TEXT,
+                expires_at TEXT,
+                valid_from TEXT,
+                valid_to TEXT
             );",
         )?;
         conn.execute(
@@ -1122,12 +1129,14 @@ fn apply_schema_migrations(conn: &Connection) -> Result<(), MicroClawError> {
                                        created_at, updated_at, embedding_model,
                                        confidence, source, last_seen_at,
                                        is_archived, archived_at, chat_channel,
-                                       external_chat_id)
+                                       external_chat_id, expires_at,
+                                       valid_from, valid_to)
              SELECT id, ?1, chat_id, content, category,
                     created_at, updated_at, embedding_model,
                     confidence, source, last_seen_at,
                     is_archived, archived_at, chat_channel,
-                    external_chat_id
+                    external_chat_id, expires_at,
+                    valid_from, valid_to
              FROM memories",
             [&bootstrap_user_id],
         )?;
@@ -1139,7 +1148,13 @@ fn apply_schema_migrations(conn: &Connection) -> Result<(), MicroClawError> {
              CREATE INDEX idx_memories_user_active_updated
                  ON memories(user_id, is_archived, updated_at DESC);
              CREATE INDEX idx_memories_user_confidence
-                 ON memories(user_id, confidence DESC);",
+                 ON memories(user_id, confidence DESC);
+             CREATE INDEX idx_memories_expires ON memories(expires_at);
+             CREATE INDEX idx_memories_active_updated
+                 ON memories(is_archived, updated_at);
+             CREATE INDEX idx_memories_confidence ON memories(confidence);
+             CREATE INDEX idx_memories_chat_active_confidence
+                 ON memories(chat_id, is_archived, confidence, last_seen_at);",
         )?;
 
         conn.execute_batch(
@@ -1466,6 +1481,7 @@ impl Database {
 
     pub fn upsert_chat(
         &self,
+        user_id: &str,
         chat_id: i64,
         chat_title: Option<&str>,
         chat_type: &str,
@@ -1473,8 +1489,8 @@ impl Database {
         let conn = self.lock_conn();
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO chats (chat_id, chat_title, chat_type, last_message_time, channel, external_chat_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO chats (chat_id, user_id, chat_title, chat_type, last_message_time, channel, external_chat_id)
+             VALUES (?1, ?7, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(chat_id) DO UPDATE SET
                 chat_title = COALESCE(?2, chat_title),
                 chat_type = ?3,
@@ -1487,7 +1503,8 @@ impl Database {
                 chat_type,
                 now,
                 infer_channel_from_chat_type(chat_type),
-                chat_id.to_string()
+                chat_id.to_string(),
+                user_id,
             ],
         )?;
         Ok(())
@@ -1495,6 +1512,7 @@ impl Database {
 
     pub fn resolve_or_create_chat_id(
         &self,
+        user_id: &str,
         channel: &str,
         external_chat_id: &str,
         chat_title: Option<&str>,
@@ -1505,8 +1523,10 @@ impl Database {
 
         if let Some(chat_id) = conn
             .query_row(
-                "SELECT chat_id FROM chats WHERE channel = ?1 AND external_chat_id = ?2 LIMIT 1",
-                params![channel, external_chat_id],
+                "SELECT chat_id FROM chats
+                 WHERE user_id = ?1 AND channel = ?2 AND external_chat_id = ?3
+                 LIMIT 1",
+                params![user_id, channel, external_chat_id],
                 |row| row.get::<_, i64>(0),
             )
             .optional()?
@@ -1534,18 +1554,18 @@ impl Database {
                 .is_some();
             if !occupied {
                 conn.execute(
-                    "INSERT INTO chats(chat_id, chat_title, chat_type, last_message_time, channel, external_chat_id)
-                     VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![cid, chat_title, chat_type, now, channel, external_chat_id],
+                    "INSERT INTO chats(chat_id, user_id, chat_title, chat_type, last_message_time, channel, external_chat_id)
+                     VALUES(?1, ?7, ?2, ?3, ?4, ?5, ?6)",
+                    params![cid, chat_title, chat_type, now, channel, external_chat_id, user_id],
                 )?;
                 return Ok(cid);
             }
         }
 
         conn.execute(
-            "INSERT INTO chats(chat_title, chat_type, last_message_time, channel, external_chat_id)
-             VALUES(?1, ?2, ?3, ?4, ?5)",
-            params![chat_title, chat_type, now, channel, external_chat_id],
+            "INSERT INTO chats(user_id, chat_title, chat_type, last_message_time, channel, external_chat_id)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            params![user_id, chat_title, chat_type, now, channel, external_chat_id],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -3389,6 +3409,7 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub fn log_llm_usage(
         &self,
+        user_id: &str,
         chat_id: i64,
         caller_channel: &str,
         provider: &str,
@@ -3402,8 +3423,8 @@ impl Database {
         let total_tokens = input_tokens.saturating_add(output_tokens);
         conn.execute(
             "INSERT INTO llm_usage_logs
-                (chat_id, caller_channel, provider, model, input_tokens, output_tokens, total_tokens, request_kind, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                (user_id, chat_id, caller_channel, provider, model, input_tokens, output_tokens, total_tokens, request_kind, created_at)
+             VALUES (?10, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 chat_id,
                 caller_channel,
@@ -3414,6 +3435,7 @@ impl Database {
                 total_tokens,
                 request_kind,
                 now,
+                user_id,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -3600,15 +3622,17 @@ impl Database {
 
     pub fn insert_memory(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
     ) -> Result<i64, MicroClawError> {
-        self.insert_memory_with_metadata(chat_id, content, category, "tool", 0.80)
+        self.insert_memory_with_metadata(user_id, chat_id, content, category, "tool", 0.80)
     }
 
     pub fn insert_memory_with_metadata(
         &self,
+        user_id: &str,
         chat_id: Option<i64>,
         content: &str,
         category: &str,
@@ -3619,8 +3643,9 @@ impl Database {
         let now = chrono::Utc::now().to_rfc3339();
         let (chat_channel, external_chat_id) = if let Some(cid) = chat_id {
             conn.query_row(
-                "SELECT channel, external_chat_id FROM chats WHERE chat_id = ?1",
-                params![cid],
+                "SELECT channel, external_chat_id FROM chats
+                 WHERE chat_id = ?1 AND user_id = ?2",
+                params![cid, user_id],
                 |row| {
                     Ok((
                         row.get::<_, Option<String>>(0)?,
@@ -3635,10 +3660,10 @@ impl Database {
         };
         conn.execute(
             "INSERT INTO memories (
-                chat_id, content, category, created_at, updated_at, embedding_model,
+                user_id, chat_id, content, category, created_at, updated_at, embedding_model,
                 confidence, source, last_seen_at, is_archived, archived_at,
                 chat_channel, external_chat_id
-            ) VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6, ?4, 0, NULL, ?7, ?8)",
+            ) VALUES (?9, ?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6, ?4, 0, NULL, ?7, ?8)",
             params![
                 chat_id,
                 content,
@@ -3647,7 +3672,8 @@ impl Database {
                 confidence.clamp(0.0, 1.0),
                 source,
                 chat_channel,
-                external_chat_id
+                external_chat_id,
+                user_id,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -3655,6 +3681,7 @@ impl Database {
 
     pub fn get_memories_for_context(
         &self,
+        user_id: &str,
         chat_id: i64,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
@@ -3664,7 +3691,8 @@ impl Database {
             "SELECT id, chat_id, content, category, created_at, updated_at, embedding_model,
                     confidence, source, last_seen_at, is_archived, archived_at, expires_at
              FROM memories
-             WHERE (chat_id = ?1 OR chat_id IS NULL)
+             WHERE user_id = ?4
+               AND (chat_id = ?1 OR chat_id IS NULL)
                AND is_archived = 0
                AND confidence >= 0.45
                AND (expires_at IS NULL OR expires_at > ?3)
@@ -3672,7 +3700,7 @@ impl Database {
              LIMIT ?2",
         )?;
         let memories = stmt
-            .query_map(params![chat_id, limit as i64, now], |row| {
+            .query_map(params![chat_id, limit as i64, now, user_id], |row| {
                 Ok(Memory {
                     id: row.get(0)?,
                     chat_id: row.get(1)?,
@@ -4189,22 +4217,23 @@ impl Database {
     ) -> Result<i64, MicroClawError> {
         let conn = self.lock_conn();
         let tx = conn.unchecked_transaction()?;
-        let (chat_id, chat_channel, external_chat_id): (
+        let (user_id, chat_id, chat_channel, external_chat_id): (
+            String,
             Option<i64>,
             Option<String>,
             Option<String>,
         ) = tx.query_row(
-            "SELECT chat_id, chat_channel, external_chat_id FROM memories WHERE id = ?1",
+            "SELECT user_id, chat_id, chat_channel, external_chat_id FROM memories WHERE id = ?1",
             params![from_memory_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
 
         let now = chrono::Utc::now().to_rfc3339();
         tx.execute(
             "INSERT INTO memories (
-                chat_id, content, category, created_at, updated_at, embedding_model,
+                user_id, chat_id, content, category, created_at, updated_at, embedding_model,
                 confidence, source, last_seen_at, is_archived, archived_at, chat_channel, external_chat_id
-            ) VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6, ?4, 0, NULL, ?7, ?8)",
+            ) VALUES (?9, ?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6, ?4, 0, NULL, ?7, ?8)",
             params![
                 chat_id,
                 new_content,
@@ -4213,7 +4242,8 @@ impl Database {
                 confidence.clamp(0.0, 1.0),
                 source,
                 chat_channel,
-                external_chat_id
+                external_chat_id,
+                user_id,
             ],
         )?;
         let to_memory_id = tx.last_insert_rowid();
@@ -5426,6 +5456,11 @@ mod tests {
     /// MICROCLAW_BOOTSTRAP_USER_ID is process-global; serialize tests touching it.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    /// Standard owner for `test_db`-built databases. Fresh DBs migrate without
+    /// requiring the env var (no rows to backfill), so this is just the value
+    /// every storage method receives.
+    pub(crate) const TEST_USER_ID: &str = "test-user-aaaaaaaa";
+
     fn test_db() -> (Database, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("microclaw_test_{}", uuid::Uuid::new_v4()));
         let db = Database::new(dir.to_str().unwrap()).unwrap();
@@ -5710,11 +5745,11 @@ mod tests {
     #[test]
     fn test_upsert_chat_insert_and_update() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("Test Chat"), "group").unwrap();
+        db.upsert_chat(TEST_USER_ID, 100, Some("Test Chat"), "group").unwrap();
         // Update title
-        db.upsert_chat(100, Some("New Title"), "group").unwrap();
+        db.upsert_chat(TEST_USER_ID, 100, Some("New Title"), "group").unwrap();
         // Insert without title
-        db.upsert_chat(200, None, "private").unwrap();
+        db.upsert_chat(TEST_USER_ID, 200, None, "private").unwrap();
         cleanup(&dir);
     }
 
@@ -6438,7 +6473,7 @@ mod tests {
     #[test]
     fn test_clear_chat_context_removes_session_messages_and_scheduled_tasks() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("chat-100"), "private").unwrap();
+        db.upsert_chat(TEST_USER_ID, 100, Some("chat-100"), "private").unwrap();
         db.save_session(100, r#"[{"role":"user","content":"hi"}]"#)
             .unwrap();
         db.store_message(&StoredMessage {
@@ -6450,7 +6485,7 @@ mod tests {
             timestamp: "2024-01-01T00:00:01Z".into(),
         })
         .unwrap();
-        db.insert_memory(Some(100), "User likes Rust", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User likes Rust", "PROFILE")
             .unwrap();
         let task_id = db
             .create_scheduled_task(
@@ -6499,7 +6534,7 @@ mod tests {
     #[test]
     fn test_clear_chat_conversation_keeps_scheduled_tasks() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("chat-100"), "private").unwrap();
+        db.upsert_chat(TEST_USER_ID, 100, Some("chat-100"), "private").unwrap();
         db.save_session(100, r#"[{"role":"user","content":"hi"}]"#)
             .unwrap();
         db.store_message(&StoredMessage {
@@ -6511,7 +6546,7 @@ mod tests {
             timestamp: "2024-01-01T00:00:01Z".into(),
         })
         .unwrap();
-        db.insert_memory(Some(100), "User likes Rust", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User likes Rust", "PROFILE")
             .unwrap();
         let task_id = db
             .create_scheduled_task(
@@ -6562,7 +6597,7 @@ mod tests {
     #[test]
     fn test_clear_chat_memory_removes_memories_but_keeps_conversation() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("chat-100"), "private").unwrap();
+        db.upsert_chat(TEST_USER_ID, 100, Some("chat-100"), "private").unwrap();
         db.save_session(100, r#"[{"role":"user","content":"hi"}]"#)
             .unwrap();
         db.store_message(&StoredMessage {
@@ -6574,7 +6609,7 @@ mod tests {
             timestamp: "2024-01-01T00:00:01Z".into(),
         })
         .unwrap();
-        db.insert_memory(Some(100), "User likes Rust", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User likes Rust", "PROFILE")
             .unwrap();
 
         assert!(db.clear_chat_memory(100).unwrap());
@@ -6722,7 +6757,7 @@ mod tests {
         let (db, dir) = test_db();
 
         let tg = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram",
                 "12345",
                 Some("telegram-12345"),
@@ -6730,7 +6765,7 @@ mod tests {
             )
             .unwrap();
         let tg_again = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram",
                 "12345",
                 Some("telegram-12345"),
@@ -6740,7 +6775,7 @@ mod tests {
         assert_eq!(tg, tg_again);
 
         let discord = db
-            .resolve_or_create_chat_id("discord", "12345", Some("discord-12345"), "discord")
+            .resolve_or_create_chat_id(TEST_USER_ID, "discord", "12345", Some("discord-12345"), "discord")
             .unwrap();
         assert_ne!(tg, discord);
         assert_eq!(
@@ -6756,7 +6791,7 @@ mod tests {
         let (db, dir) = test_db();
 
         let scoped_chat_id = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram.btcpos",
                 "12345",
                 Some("telegram-12345"),
@@ -6764,7 +6799,7 @@ mod tests {
             )
             .unwrap();
 
-        db.upsert_chat(scoped_chat_id, Some("Updated title"), "telegram_private")
+        db.upsert_chat(TEST_USER_ID, scoped_chat_id, Some("Updated title"), "telegram_private")
             .unwrap();
 
         assert_eq!(
@@ -6777,7 +6812,7 @@ mod tests {
         );
 
         let scoped_again = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram.btcpos",
                 "12345",
                 Some("telegram-12345"),
@@ -6794,7 +6829,7 @@ mod tests {
         let (db, dir) = test_db();
 
         let default_tg = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram",
                 "12345",
                 Some("telegram-12345"),
@@ -6802,7 +6837,7 @@ mod tests {
             )
             .unwrap();
         let scoped_tg = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram.btcpos",
                 "12345",
                 Some("telegram-12345"),
@@ -6813,7 +6848,7 @@ mod tests {
         assert_ne!(default_tg, scoped_tg);
 
         let default_tg_again = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram",
                 "12345",
                 Some("telegram-12345"),
@@ -6821,7 +6856,7 @@ mod tests {
             )
             .unwrap();
         let scoped_tg_again = db
-            .resolve_or_create_chat_id(
+            .resolve_or_create_chat_id(TEST_USER_ID, 
                 "telegram.btcpos",
                 "12345",
                 Some("telegram-12345"),
@@ -6840,7 +6875,7 @@ mod tests {
         let (db, dir) = test_db();
 
         for i in 0..5000 {
-            db.resolve_or_create_chat_id(
+            db.resolve_or_create_chat_id(TEST_USER_ID, 
                 "web",
                 &format!("ext-{i}"),
                 Some(&format!("title-{i}")),
@@ -6849,10 +6884,10 @@ mod tests {
             .unwrap();
         }
         let target = db
-            .resolve_or_create_chat_id("web", "legacy-ext", Some("legacy-session"), "web")
+            .resolve_or_create_chat_id(TEST_USER_ID, "web", "legacy-ext", Some("legacy-session"), "web")
             .unwrap();
         for i in 5000..9300 {
-            db.resolve_or_create_chat_id(
+            db.resolve_or_create_chat_id(TEST_USER_ID, 
                 "web",
                 &format!("ext-{i}"),
                 Some(&format!("title-{i}")),
@@ -6871,6 +6906,10 @@ mod tests {
 
     #[test]
     fn test_migration_backfills_chat_identity_columns() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        unsafe {
+            std::env::set_var(BOOTSTRAP_USER_ID_ENV, TEST_USER_ID);
+        }
         let dir = std::env::temp_dir().join(format!(
             "microclaw_migration_chat_identity_{}",
             uuid::Uuid::new_v4()
@@ -6909,6 +6948,10 @@ mod tests {
 
     #[test]
     fn test_migration_backfills_memory_identity_columns() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        unsafe {
+            std::env::set_var(BOOTSTRAP_USER_ID_ENV, TEST_USER_ID);
+        }
         let dir = std::env::temp_dir().join(format!(
             "microclaw_migration_memory_identity_{}",
             uuid::Uuid::new_v4()
@@ -6960,7 +7003,7 @@ mod tests {
     #[test]
     fn test_log_llm_usage_and_summary() {
         let (db, dir) = test_db();
-        db.log_llm_usage(
+        db.log_llm_usage(TEST_USER_ID, 
             100,
             "telegram",
             "anthropic",
@@ -6970,7 +7013,7 @@ mod tests {
             "agent_loop",
         )
         .unwrap();
-        db.log_llm_usage(
+        db.log_llm_usage(TEST_USER_ID, 
             100,
             "telegram",
             "anthropic",
@@ -6980,7 +7023,7 @@ mod tests {
             "agent_loop",
         )
         .unwrap();
-        db.log_llm_usage(200, "discord", "openai", "gpt-test", 30, 7, "agent_loop")
+        db.log_llm_usage(TEST_USER_ID, 200, "discord", "openai", "gpt-test", 30, 7, "agent_loop")
             .unwrap();
 
         let chat_100 = db.get_llm_usage_summary(Some(100)).unwrap();
@@ -7003,8 +7046,8 @@ mod tests {
     #[test]
     fn test_delete_chat_data_cleans_llm_usage() {
         let (db, dir) = test_db();
-        db.upsert_chat(100, Some("chat-100"), "private").unwrap();
-        db.log_llm_usage(
+        db.upsert_chat(TEST_USER_ID, 100, Some("chat-100"), "private").unwrap();
+        db.log_llm_usage(TEST_USER_ID, 
             100,
             "telegram",
             "anthropic",
@@ -7014,7 +7057,7 @@ mod tests {
             "agent_loop",
         )
         .unwrap();
-        db.log_llm_usage(
+        db.log_llm_usage(TEST_USER_ID, 
             200,
             "telegram",
             "anthropic",
@@ -7038,7 +7081,7 @@ mod tests {
     #[test]
     fn test_get_llm_usage_summary_since_and_by_model() {
         let (db, dir) = test_db();
-        db.log_llm_usage(
+        db.log_llm_usage(TEST_USER_ID, 
             100,
             "telegram",
             "anthropic",
@@ -7048,7 +7091,7 @@ mod tests {
             "agent_loop",
         )
         .unwrap();
-        db.log_llm_usage(
+        db.log_llm_usage(TEST_USER_ID, 
             100,
             "telegram",
             "anthropic",
@@ -7058,7 +7101,7 @@ mod tests {
             "agent_loop",
         )
         .unwrap();
-        db.log_llm_usage(100, "telegram", "anthropic", "claude-b", 3, 7, "agent_loop")
+        db.log_llm_usage(TEST_USER_ID, 100, "telegram", "anthropic", "claude-b", 3, 7, "agent_loop")
             .unwrap();
 
         let all = db.get_llm_usage_summary_since(Some(100), None).unwrap();
@@ -7088,16 +7131,16 @@ mod tests {
     #[test]
     fn test_insert_and_get_memories_for_context() {
         let (db, dir) = test_db();
-        db.insert_memory(Some(100), "User is a Rust developer", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User is a Rust developer", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "User lives in Tokyo", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User lives in Tokyo", "PROFILE")
             .unwrap();
-        db.insert_memory(None, "Global fact", "KNOWLEDGE").unwrap();
-        db.insert_memory(Some(200), "Other chat memory", "EVENT")
+        db.insert_memory(TEST_USER_ID, None, "Global fact", "KNOWLEDGE").unwrap();
+        db.insert_memory(TEST_USER_ID, Some(200), "Other chat memory", "EVENT")
             .unwrap();
 
         // chat 100 should see its own + global, not chat 200
-        let mems = db.get_memories_for_context(100, 10).unwrap();
+        let mems = db.get_memories_for_context(TEST_USER_ID, 100, 10).unwrap();
         assert_eq!(mems.len(), 3);
         let contents: Vec<&str> = mems.iter().map(|m| m.content.as_str()).collect();
         assert!(contents.contains(&"User is a Rust developer"));
@@ -7112,10 +7155,10 @@ mod tests {
     fn test_get_memories_for_context_limit() {
         let (db, dir) = test_db();
         for i in 0..5 {
-            db.insert_memory(Some(100), &format!("memory {i}"), "KNOWLEDGE")
+            db.insert_memory(TEST_USER_ID, Some(100), &format!("memory {i}"), "KNOWLEDGE")
                 .unwrap();
         }
-        let mems = db.get_memories_for_context(100, 3).unwrap();
+        let mems = db.get_memories_for_context(TEST_USER_ID, 100, 3).unwrap();
         assert_eq!(mems.len(), 3);
         cleanup(&dir);
     }
@@ -7123,13 +7166,13 @@ mod tests {
     #[test]
     fn test_get_all_memories_for_chat() {
         let (db, dir) = test_db();
-        db.insert_memory(Some(100), "chat 100 mem", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "chat 100 mem", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "chat 100 mem 2", "EVENT")
+        db.insert_memory(TEST_USER_ID, Some(100), "chat 100 mem 2", "EVENT")
             .unwrap();
-        db.insert_memory(Some(200), "chat 200 mem", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(200), "chat 200 mem", "PROFILE")
             .unwrap();
-        db.insert_memory(None, "global mem", "KNOWLEDGE").unwrap();
+        db.insert_memory(TEST_USER_ID, None, "global mem", "KNOWLEDGE").unwrap();
 
         let mems = db.get_all_memories_for_chat(Some(100)).unwrap();
         assert_eq!(mems.len(), 2);
@@ -7193,11 +7236,11 @@ mod tests {
     #[test]
     fn test_search_memories() {
         let (db, dir) = test_db();
-        db.insert_memory(Some(100), "User is a Rust developer", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User is a Rust developer", "PROFILE")
             .unwrap();
-        db.insert_memory(Some(100), "User loves coffee", "PROFILE")
+        db.insert_memory(TEST_USER_ID, Some(100), "User loves coffee", "PROFILE")
             .unwrap();
-        db.insert_memory(None, "Rust is fast and safe", "KNOWLEDGE")
+        db.insert_memory(TEST_USER_ID, None, "Rust is fast and safe", "KNOWLEDGE")
             .unwrap();
 
         let results = db.search_memories(100, "rust", 10).unwrap();
@@ -7216,7 +7259,7 @@ mod tests {
     fn test_archive_memory_hides_from_search_and_context() {
         let (db, dir) = test_db();
         let id = db
-            .insert_memory(Some(100), "User prefers concise summaries", "PROFILE")
+            .insert_memory(TEST_USER_ID, Some(100), "User prefers concise summaries", "PROFILE")
             .unwrap();
         assert!(db.archive_memory(id).unwrap());
 
@@ -7226,7 +7269,7 @@ mod tests {
 
         let search = db.search_memories(100, "concise", 10).unwrap();
         assert!(search.is_empty());
-        let context = db.get_memories_for_context(100, 10).unwrap();
+        let context = db.get_memories_for_context(TEST_USER_ID, 100, 10).unwrap();
         assert!(context.is_empty());
 
         cleanup(&dir);
@@ -7238,10 +7281,10 @@ mod tests {
         let started_at_dt = chrono::Utc::now() - chrono::Duration::minutes(1);
         let started_at = started_at_dt.to_rfc3339();
         let finished_at = (started_at_dt + chrono::Duration::seconds(1)).to_rfc3339();
-        db.insert_memory_with_metadata(Some(100), "prod db on 5433", "KNOWLEDGE", "explicit", 0.95)
+        db.insert_memory_with_metadata(TEST_USER_ID, Some(100), "prod db on 5433", "KNOWLEDGE", "explicit", 0.95)
             .unwrap();
         let stale_id = db
-            .insert_memory_with_metadata(Some(100), "temporary thought", "EVENT", "reflector", 0.20)
+            .insert_memory_with_metadata(TEST_USER_ID, Some(100), "temporary thought", "EVENT", "reflector", 0.20)
             .unwrap();
         db.archive_memory(stale_id).unwrap();
         db.log_reflector_run(
@@ -7275,7 +7318,7 @@ mod tests {
     fn test_supersede_memory_creates_edge_and_archives_old() {
         let (db, dir) = test_db();
         let old_id = db
-            .insert_memory_with_metadata(
+            .insert_memory_with_metadata(TEST_USER_ID, 
                 Some(100),
                 "prod db port is 5433",
                 "KNOWLEDGE",
@@ -7316,7 +7359,7 @@ mod tests {
     fn test_delete_memory() {
         let (db, dir) = test_db();
         let id = db
-            .insert_memory(Some(100), "to be deleted", "EVENT")
+            .insert_memory(TEST_USER_ID, Some(100), "to be deleted", "EVENT")
             .unwrap();
 
         assert!(db.delete_memory(id).unwrap());
@@ -7330,7 +7373,7 @@ mod tests {
     fn test_update_memory_content() {
         let (db, dir) = test_db();
         let id = db
-            .insert_memory(Some(100), "User lives in Tokyo", "PROFILE")
+            .insert_memory(TEST_USER_ID, Some(100), "User lives in Tokyo", "PROFILE")
             .unwrap();
 
         assert!(db
@@ -7351,7 +7394,7 @@ mod tests {
     fn test_get_memory_by_id() {
         let (db, dir) = test_db();
         let id = db
-            .insert_memory(Some(100), "test memory", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(100), "test memory", "KNOWLEDGE")
             .unwrap();
 
         let mem = db.get_memory_by_id(id).unwrap().unwrap();
@@ -7368,10 +7411,10 @@ mod tests {
     fn test_update_memory_embedding_model_and_query_missing() {
         let (db, dir) = test_db();
         let id1 = db
-            .insert_memory(Some(100), "memory one", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(100), "memory one", "KNOWLEDGE")
             .unwrap();
         let id2 = db
-            .insert_memory(Some(100), "memory two", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(100), "memory two", "KNOWLEDGE")
             .unwrap();
 
         let missing_before = db.get_memories_without_embedding(Some(100), 10).unwrap();
@@ -7485,10 +7528,10 @@ mod tests {
     fn test_memory_ttl_filters_and_prunes() {
         let (db, dir) = test_db();
         let durable = db
-            .insert_memory(Some(7), "durable fact", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(7), "durable fact", "KNOWLEDGE")
             .unwrap();
         let expiring = db
-            .insert_memory(Some(7), "transient fact", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(7), "transient fact", "KNOWLEDGE")
             .unwrap();
         let past = (chrono::Utc::now() - chrono::Duration::seconds(1)).to_rfc3339();
         let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
@@ -7498,7 +7541,7 @@ mod tests {
         // Past expiry — gets filtered from retrieval right away.
         db.set_memory_expires_at(expiring, Some(&past)).unwrap();
 
-        let ctx = db.get_memories_for_context(7, 50).unwrap();
+        let ctx = db.get_memories_for_context(TEST_USER_ID, 7, 50).unwrap();
         let ids: Vec<i64> = ctx.iter().map(|m| m.id).collect();
         assert!(ids.contains(&durable), "durable memory should be visible");
         assert!(
@@ -7565,10 +7608,10 @@ mod tests {
         let (db, dir) = test_db();
         db.prepare_vector_index(3).unwrap();
         let id1 = db
-            .insert_memory(Some(100), "vector one", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(100), "vector one", "KNOWLEDGE")
             .unwrap();
         let id2 = db
-            .insert_memory(Some(100), "vector two", "KNOWLEDGE")
+            .insert_memory(TEST_USER_ID, Some(100), "vector two", "KNOWLEDGE")
             .unwrap();
         db.upsert_memory_vec(id1, &[1.0, 0.0, 0.0]).unwrap();
         db.upsert_memory_vec(id2, &[0.0, 1.0, 0.0]).unwrap();
@@ -7609,7 +7652,10 @@ mod tests {
                 is_archived INTEGER NOT NULL DEFAULT 0,
                 archived_at TEXT,
                 chat_channel TEXT,
-                external_chat_id TEXT
+                external_chat_id TEXT,
+                expires_at TEXT,
+                valid_from TEXT,
+                valid_to TEXT
              );
              CREATE TABLE llm_usage_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
