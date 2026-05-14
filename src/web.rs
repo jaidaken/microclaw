@@ -2419,7 +2419,10 @@ async fn require_docs_operator_session(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
+    if !identity.is_operator() {
+        return Err((StatusCode::FORBIDDEN, "operator role required".into()));
+    }
     Ok(next.run(req).await)
 }
 
