@@ -2858,15 +2858,40 @@ impl Database {
         }
     }
 
-    pub fn list_session_meta(&self, limit: usize) -> Result<Vec<SessionTreeRow>, MicroClawError> {
+    pub fn list_session_meta(
+        &self,
+        user_filter: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SessionTreeRow>, MicroClawError> {
         let conn = self.lock_conn();
+        if let Some(uid) = user_filter {
+            let mut stmt = conn.prepare(
+                "SELECT s.chat_id, s.parent_session_key, s.fork_point, s.updated_at
+                 FROM sessions s
+                 INNER JOIN chats c ON c.chat_id = s.chat_id
+                 WHERE c.user_id = ?1
+                 ORDER BY s.updated_at DESC
+                 LIMIT ?2",
+            )?;
+            let rows: Vec<SessionTreeRow> = stmt
+                .query_map(params![uid, limit as i64], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(rows);
+        }
         let mut stmt = conn.prepare(
             "SELECT chat_id, parent_session_key, fork_point, updated_at
              FROM sessions
              ORDER BY updated_at DESC
              LIMIT ?1",
         )?;
-        let rows = stmt
+        let rows: Vec<SessionTreeRow> = stmt
             .query_map(params![limit as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,

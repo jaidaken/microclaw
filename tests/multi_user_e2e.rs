@@ -236,6 +236,46 @@ fn archive_excess_memories_scopes_to_user() {
     cleanup(&dir);
 }
 
+#[test]
+fn list_session_meta_with_user_filter_excludes_other_users() {
+    let (db, dir) = test_db();
+    let alice = "user-alice";
+    let bob = "user-bob";
+    let alice_chat = db
+        .resolve_or_create_chat_id(alice, "web", "alice-tree", Some("alice-tree"), "web")
+        .unwrap();
+    let bob_chat = db
+        .resolve_or_create_chat_id(bob, "web", "bob-tree", Some("bob-tree"), "web")
+        .unwrap();
+    db.save_session(alice_chat, r#"[{"role":"user","content":"alice"}]"#)
+        .unwrap();
+    db.save_session(bob_chat, r#"[{"role":"user","content":"bob"}]"#)
+        .unwrap();
+
+    let alice_rows = db.list_session_meta(Some(alice), 100).unwrap();
+    let alice_ids: Vec<i64> = alice_rows.iter().map(|r| r.0).collect();
+    assert!(alice_ids.contains(&alice_chat));
+    assert!(
+        !alice_ids.contains(&bob_chat),
+        "alice must not see bob's session metadata"
+    );
+
+    let bob_rows = db.list_session_meta(Some(bob), 100).unwrap();
+    let bob_ids: Vec<i64> = bob_rows.iter().map(|r| r.0).collect();
+    assert!(bob_ids.contains(&bob_chat));
+    assert!(
+        !bob_ids.contains(&alice_chat),
+        "bob must not see alice's session metadata"
+    );
+
+    let op_rows = db.list_session_meta(None, 100).unwrap();
+    let op_ids: Vec<i64> = op_rows.iter().map(|r| r.0).collect();
+    assert!(op_ids.contains(&alice_chat));
+    assert!(op_ids.contains(&bob_chat));
+
+    cleanup(&dir);
+}
+
 #[tokio::test]
 async fn memory_backend_routes_user_id_through_provider() {
     use std::sync::Arc;

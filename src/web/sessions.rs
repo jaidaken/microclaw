@@ -460,10 +460,15 @@ pub(super) async fn api_sessions_tree(
     Query(query): Query<SessionTreeQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
+    let user_filter = if identity.is_operator() {
+        None
+    } else {
+        Some(super::extract_user_id(&headers)?)
+    };
     let limit = query.limit.unwrap_or(1000).clamp(1, 5000);
     let rows = call_blocking(state.app_state.db.clone(), move |db| {
-        db.list_session_meta(limit)
+        db.list_session_meta(user_filter.as_deref(), limit)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
