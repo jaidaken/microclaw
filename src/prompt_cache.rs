@@ -150,7 +150,7 @@ fn attach_marker_to_block(block: &mut Value, marker: &Value) {
 fn last_cacheable_block_idx(blocks: &[Value]) -> Option<usize> {
     for (i, b) in blocks.iter().enumerate().rev() {
         let is_empty_text = b.get("type").and_then(|t| t.as_str()) == Some("text")
-            && b.get("text").and_then(|t| t.as_str()).map_or(true, str::is_empty);
+            && b.get("text").and_then(|t| t.as_str()).is_none_or(str::is_empty);
         if !is_empty_text {
             return Some(i);
         }

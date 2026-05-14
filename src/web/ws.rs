@@ -618,6 +618,7 @@ fn ws_error_code_for_status(status: StatusCode) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_request_frame(
     state: &WebState,
     sender: &SharedSender,

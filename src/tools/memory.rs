@@ -151,7 +151,17 @@ impl Tool for ReadMemoryTool {
         };
 
         let path = match scope {
-            "global" => self.groups_dir.join("AGENTS.md"),
+            "global" => {
+                if let Some(auth) = auth_context_from_input(&input) {
+                    if !auth.is_control_chat() {
+                        return ToolResult::error(format!(
+                            "Permission denied: only control chats can read global memory (caller: {})",
+                            auth.caller_chat_id
+                        ));
+                    }
+                }
+                self.groups_dir.join("AGENTS.md")
+            }
             "bot" => {
                 let channel = memory_channel_from_auth(&input);
                 self.groups_dir.join(channel).join("AGENTS.md")

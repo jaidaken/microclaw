@@ -3281,6 +3281,7 @@ impl Database {
         Ok(Some((key_id, scopes)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn log_audit_event(
         &self,
         kind: &str,
