@@ -112,13 +112,16 @@ pub(super) async fn api_auth_status(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let has_password = hash.is_some();
-    let using_default_password = hash
-        .as_deref()
-        .map(|h| verify_password_hash(h, DEFAULT_WEB_PASSWORD))
-        .unwrap_or(false);
     let authenticated = require_scope(&state, &headers, AuthScope::Read)
         .await
         .is_ok();
+    let using_default_password = if authenticated {
+        hash.as_deref()
+            .map(|h| verify_password_hash(h, DEFAULT_WEB_PASSWORD))
+            .unwrap_or(false)
+    } else {
+        false
+    };
     Ok(Json(AuthStatus {
         ok: true,
         authenticated,

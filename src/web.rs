@@ -713,7 +713,9 @@ async fn audit_log(
     let status = status.to_string();
     let detail = detail.map(str::to_string);
     let subject = subject_user_id.map(str::to_string);
-    let _ = call_blocking(state.app_state.db.clone(), move |db| {
+    let kind_for_log = kind.clone();
+    let action_for_log = action.clone();
+    let result = call_blocking(state.app_state.db.clone(), move |db| {
         db.log_audit_event(
             &kind,
             &actor,
@@ -726,6 +728,14 @@ async fn audit_log(
         .map(|_| ())
     })
     .await;
+    if let Err(e) = result {
+        tracing::error!(
+            error = %e,
+            kind = %kind_for_log,
+            action = %action_for_log,
+            "audit_log write failed; audit trail has a gap"
+        );
+    }
 }
 
 fn normalize_session_key(session_key: Option<&str>) -> String {
@@ -1249,15 +1259,16 @@ async fn api_health(
     State(state): State<WebState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    let authenticated = require_scope(&state, &headers, AuthScope::Read)
-        .await
-        .is_ok();
+    let identity = require_scope(&state, &headers, AuthScope::Read).await.ok();
     let basic = json!({
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
         "web_enabled": state.app_state.config.web_enabled,
     });
-    if !authenticated {
+    let Some(id) = identity else {
+        return Ok(Json(basic));
+    };
+    if !id.is_operator() {
         return Ok(Json(basic));
     }
     let since_24h = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();

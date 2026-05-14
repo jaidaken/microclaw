@@ -205,7 +205,10 @@ pub(super) async fn api_get_config(
     State(state): State<WebState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
+    if !identity.is_operator() {
+        return Err((StatusCode::FORBIDDEN, "operator role required".into()));
+    }
 
     let config_for_display =
         crate::config::Config::load().unwrap_or_else(|_| state.app_state.config.clone());
@@ -237,7 +240,10 @@ pub(super) async fn api_config_self_check(
     State(state): State<WebState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     metrics_http_inc(&state).await;
-    require_scope(&state, &headers, AuthScope::Read).await?;
+    let identity = require_scope(&state, &headers, AuthScope::Read).await?;
+    if !identity.is_operator() {
+        return Err((StatusCode::FORBIDDEN, "operator role required".into()));
+    }
 
     let mut warnings = Vec::<ConfigWarning>::new();
     let has_password = call_blocking(state.app_state.db.clone(), |db| db.get_auth_password_hash())
