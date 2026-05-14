@@ -332,9 +332,11 @@ impl Tool for WriteMemoryTool {
                                 Some(u) => u,
                                 None => {
                                     warn!(
-                                        "WriteMemoryTool: auth_context.user_id missing; falling back to bootstrap_user_id"
+                                        "WriteMemoryTool: auth_context.user_id missing; refusing to write memory under bootstrap fallback"
                                     );
-                                    microclaw_core::tenant::bootstrap_user_id()
+                                    return ToolResult::error(
+                                        "write_memory requires an authenticated user context".into(),
+                                    );
                                 }
                             };
                             if let Ok(memory_id) = self
@@ -428,7 +430,15 @@ mod tests {
         let read_tool = ReadMemoryTool::new(dir.to_str().unwrap(), db.clone());
 
         let result = write_tool
-            .execute(json!({"scope": "global", "content": "user prefers Rust"}))
+            .execute(json!({
+                "scope": "global",
+                "content": "user prefers Rust",
+                "__microclaw_auth": {
+                    "caller_chat_id": 100,
+                    "user_id": "__pending__",
+                    "control_chat_ids": [100]
+                }
+            }))
             .await;
         assert!(!result.is_error);
         assert!(result.content.contains("Memory saved"));
@@ -436,7 +446,7 @@ mod tests {
         let result = read_tool.execute(json!({"scope": "global"})).await;
         assert!(!result.is_error);
         assert_eq!(result.content, "user prefers Rust");
-        let mems = db.get_all_memories_for_chat(None).unwrap();
+        let mems = db.get_all_memories_for_chat(None, None).unwrap();
         assert_eq!(mems.len(), 1);
         assert_eq!(mems[0].content, "user prefers Rust");
 
@@ -454,16 +464,25 @@ mod tests {
         let read_tool = ReadMemoryTool::new(dir.to_str().unwrap(), db.clone());
 
         let result = write_tool
-            .execute(json!({"scope": "chat", "chat_id": 42, "content": "chat 42 notes"}))
+            .execute(json!({
+                "scope": "chat",
+                "chat_id": 42,
+                "content": "chat 42 notes",
+                "__microclaw_auth": {
+                    "caller_chat_id": 42,
+                    "user_id": "__pending__",
+                    "control_chat_ids": []
+                }
+            }))
             .await;
-        assert!(!result.is_error);
+        assert!(!result.is_error, "{}", result.content);
 
         let result = read_tool
             .execute(json!({"scope": "chat", "chat_id": 42}))
             .await;
         assert!(!result.is_error);
         assert_eq!(result.content, "chat 42 notes");
-        let mems = db.get_all_memories_for_chat(Some(42)).unwrap();
+        let mems = db.get_all_memories_for_chat(None, Some(42)).unwrap();
         assert_eq!(mems.len(), 1);
         assert_eq!(mems[0].content, "chat 42 notes");
 
@@ -496,6 +515,7 @@ mod tests {
                 "__microclaw_auth": {
                     "caller_channel": "web",
                     "caller_chat_id": 42,
+                    "user_id": "__pending__",
                     "control_chat_ids": []
                 }
             }))
@@ -519,19 +539,46 @@ mod tests {
 
         store_user_message(&db, 42, "alice", "remember profile");
         let r1 = tool
-            .execute(json!({"scope": "chat", "chat_id": 42, "content": "昵称: 老板"}))
+            .execute(json!({
+                "scope": "chat",
+                "chat_id": 42,
+                "content": "昵称: 老板",
+                "__microclaw_auth": {
+                    "caller_chat_id": 42,
+                    "user_id": "__pending__",
+                    "control_chat_ids": []
+                }
+            }))
             .await;
         assert!(!r1.is_error, "{}", r1.content);
 
         store_user_message(&db, 42, "bob", "remember profile");
         let r2 = tool
-            .execute(json!({"scope": "chat", "chat_id": 42, "content": "昵称: Bob哥"}))
+            .execute(json!({
+                "scope": "chat",
+                "chat_id": 42,
+                "content": "昵称: Bob哥",
+                "__microclaw_auth": {
+                    "caller_chat_id": 42,
+                    "user_id": "__pending__",
+                    "control_chat_ids": []
+                }
+            }))
             .await;
         assert!(!r2.is_error, "{}", r2.content);
 
         store_user_message(&db, 42, "alice", "update profile");
         let r3 = tool
-            .execute(json!({"scope": "chat", "chat_id": 42, "content": "昵称: 大老板"}))
+            .execute(json!({
+                "scope": "chat",
+                "chat_id": 42,
+                "content": "昵称: 大老板",
+                "__microclaw_auth": {
+                    "caller_chat_id": 42,
+                    "user_id": "__pending__",
+                    "control_chat_ids": []
+                }
+            }))
             .await;
         assert!(!r3.is_error, "{}", r3.content);
 
@@ -586,6 +633,7 @@ mod tests {
                 "__microclaw_auth": {
                     "caller_channel": "feishu.ops",
                     "caller_chat_id": 42,
+                    "user_id": "__pending__",
                     "control_chat_ids": []
                 }
             }))
@@ -637,6 +685,7 @@ mod tests {
                 "content": "secret",
                 "__microclaw_auth": {
                     "caller_chat_id": 100,
+                    "user_id": "__pending__",
                     "control_chat_ids": []
                 }
             }))
@@ -657,6 +706,7 @@ mod tests {
                 "content": "global ok",
                 "__microclaw_auth": {
                     "caller_chat_id": 100,
+                    "user_id": "__pending__",
                     "control_chat_ids": [100]
                 }
             }))
@@ -678,6 +728,7 @@ mod tests {
                 "chat_id": 200,
                 "__microclaw_auth": {
                     "caller_chat_id": 100,
+                    "user_id": "__pending__",
                     "control_chat_ids": []
                 }
             }))
@@ -705,6 +756,7 @@ mod tests {
                 "chat_id": 200,
                 "__microclaw_auth": {
                     "caller_chat_id": 100,
+                    "user_id": "__pending__",
                     "control_chat_ids": [100]
                 }
             }))

@@ -732,7 +732,7 @@ async fn reflect_for_chat(state: &Arc<AppState>, chat_id: i64) {
     // 4. Load existing memories (needed for dedup and to pass to LLM for merge)
     let existing = match state
         .memory_backend
-        .get_all_memories_for_chat(Some(chat_id))
+        .get_all_memories_for_chat(None, Some(chat_id))
         .await
     {
         Ok(m) => m,

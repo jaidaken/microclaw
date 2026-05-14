@@ -3931,33 +3931,45 @@ impl Database {
 
     pub fn get_all_memories_for_chat(
         &self,
+        user_filter: Option<&str>,
         chat_id: Option<i64>,
     ) -> Result<Vec<Memory>, MicroClawError> {
         let conn = self.lock_conn();
-        let mut stmt = conn.prepare(
+        let mut sql = String::from(
             "SELECT id, chat_id, content, category, created_at, updated_at, embedding_model,
                     confidence, source, last_seen_at, is_archived, archived_at, expires_at
              FROM memories
              WHERE (chat_id = ?1 OR (?1 IS NULL AND chat_id IS NULL))",
-        )?;
+        );
+        let mut binds: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(chat_id)];
+        if let Some(uid) = user_filter {
+            sql.push_str(" AND user_id = ?");
+            sql.push_str(&(binds.len() + 1).to_string());
+            binds.push(Box::new(uid.to_string()));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
         let memories = stmt
-            .query_map(params![chat_id], |row| {
-                Ok(Memory {
-                    id: row.get(0)?,
-                    chat_id: row.get(1)?,
-                    content: row.get(2)?,
-                    category: row.get(3)?,
-                    created_at: row.get(4)?,
-                    updated_at: row.get(5)?,
-                    embedding_model: row.get(6)?,
-                    confidence: row.get(7)?,
-                    source: row.get(8)?,
-                    last_seen_at: row.get(9)?,
-                    is_archived: row.get::<_, i64>(10)? != 0,
-                    archived_at: row.get(11)?,
-                    expires_at: row.get(12)?,
-                })
-            })?
+            .query_map(
+                rusqlite::params_from_iter(bind_refs.iter().copied()),
+                |row| {
+                    Ok(Memory {
+                        id: row.get(0)?,
+                        chat_id: row.get(1)?,
+                        content: row.get(2)?,
+                        category: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                        embedding_model: row.get(6)?,
+                        confidence: row.get(7)?,
+                        source: row.get(8)?,
+                        last_seen_at: row.get(9)?,
+                        is_archived: row.get::<_, i64>(10)? != 0,
+                        archived_at: row.get(11)?,
+                        expires_at: row.get(12)?,
+                    })
+                },
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(memories)
     }
@@ -3976,15 +3988,17 @@ impl Database {
     /// Keyword search in memories visible to chat_id (own + global).
     pub fn search_memories(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
     ) -> Result<Vec<Memory>, MicroClawError> {
-        self.search_memories_with_options(chat_id, query, limit, false, true)
+        self.search_memories_with_options(user_filter, chat_id, query, limit, false, true)
     }
 
     pub fn search_memories_with_options(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
@@ -3994,13 +4008,16 @@ impl Database {
         let conn = self.lock_conn();
         let pattern = format!("%{}%", query.to_lowercase());
         let now = chrono::Utc::now().to_rfc3339();
-        let mut sql = String::from(
+        let user_clause = user_filter
+            .map(|_| " AND user_id = ?5".to_string())
+            .unwrap_or_default();
+        let mut sql = format!(
             "SELECT id, chat_id, content, category, created_at, updated_at, embedding_model,
                     confidence, source, last_seen_at, is_archived, archived_at, expires_at
              FROM memories
              WHERE (chat_id = ?1 OR chat_id IS NULL)
                AND LOWER(content) LIKE ?2
-               AND (expires_at IS NULL OR expires_at > ?4)",
+               AND (expires_at IS NULL OR expires_at > ?4){user_clause}",
         );
         if !include_archived {
             sql.push_str(" AND is_archived = 0");
@@ -4010,8 +4027,31 @@ impl Database {
         }
         sql.push_str(" ORDER BY confidence DESC, updated_at DESC LIMIT ?3");
         let mut stmt = conn.prepare(&sql)?;
-        let memories = stmt
-            .query_map(params![chat_id, pattern, limit as i64, now], |row| {
+        let uid_owned = user_filter.map(str::to_string).unwrap_or_default();
+        let memories = if user_filter.is_some() {
+            stmt.query_map(
+                params![chat_id, pattern, limit as i64, now, uid_owned],
+                |row| {
+                    Ok(Memory {
+                        id: row.get(0)?,
+                        chat_id: row.get(1)?,
+                        content: row.get(2)?,
+                        category: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                        embedding_model: row.get(6)?,
+                        confidence: row.get(7)?,
+                        source: row.get(8)?,
+                        last_seen_at: row.get(9)?,
+                        is_archived: row.get::<_, i64>(10)? != 0,
+                        archived_at: row.get(11)?,
+                        expires_at: row.get(12)?,
+                    })
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map(params![chat_id, pattern, limit as i64, now], |row| {
                 Ok(Memory {
                     id: row.get(0)?,
                     chat_id: row.get(1)?,
@@ -4028,7 +4068,8 @@ impl Database {
                     expires_at: row.get(12)?,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+        };
         Ok(memories)
     }
 

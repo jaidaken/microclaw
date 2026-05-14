@@ -76,9 +76,12 @@ impl Tool for StructuredMemorySearchTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let chat_id = auth_context_from_input(&input)
-            .map(|a| a.caller_chat_id)
-            .unwrap_or(0);
+        let auth = auth_context_from_input(&input);
+        let chat_id = auth.as_ref().map(|a| a.caller_chat_id).unwrap_or(0);
+        let user_filter: Option<String> = auth
+            .as_ref()
+            .map(|a| a.user_id.clone())
+            .filter(|u| !u.is_empty());
 
         info!(
             "structured_memory_search: query={query:?} chat_id={chat_id} limit={limit} include_archived={include_archived}"
@@ -87,13 +90,17 @@ impl Tool for StructuredMemorySearchTool {
         let result = if query.is_empty() {
             let mut memories = match self
                 .memory_backend
-                .get_all_memories_for_chat(Some(chat_id))
+                .get_all_memories_for_chat(user_filter.as_deref(), Some(chat_id))
                 .await
             {
                 Ok(m) => m,
                 Err(e) => return ToolResult::error(format!("Search failed: {e}")),
             };
-            let mut global = match self.memory_backend.get_all_memories_for_chat(None).await {
+            let mut global = match self
+                .memory_backend
+                .get_all_memories_for_chat(user_filter.as_deref(), None)
+                .await
+            {
                 Ok(m) => m,
                 Err(e) => return ToolResult::error(format!("Search failed: {e}")),
             };
@@ -106,7 +113,14 @@ impl Tool for StructuredMemorySearchTool {
             Ok(memories)
         } else {
             self.memory_backend
-                .search_memories_with_options(chat_id, &query, limit, include_archived, true)
+                .search_memories_with_options(
+                    user_filter.as_deref(),
+                    chat_id,
+                    &query,
+                    limit,
+                    include_archived,
+                    true,
+                )
                 .await
         };
 

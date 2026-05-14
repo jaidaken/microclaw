@@ -286,7 +286,7 @@ impl MemoryBackend {
         let Some(primary) = &self.primary_provider else {
             return Ok(());
         };
-        match primary.get_all_memories_for_chat(None).await {
+        match primary.get_all_memories_for_chat(None, None).await {
             Ok(_) => {
                 self.stats.record_primary_success();
                 self.stats.startup_probe_ok.store(true, Ordering::SeqCst);
@@ -308,9 +308,12 @@ impl MemoryBackend {
 
     pub async fn get_all_memories_for_chat(
         &self,
+        user_filter: Option<&str>,
         chat_id: Option<i64>,
     ) -> Result<Vec<Memory>, MicroClawError> {
-        self.provider.get_all_memories_for_chat(chat_id).await
+        self.provider
+            .get_all_memories_for_chat(user_filter, chat_id)
+            .await
     }
 
     pub async fn get_memories_for_context(
@@ -324,6 +327,7 @@ impl MemoryBackend {
 
     pub async fn search_memories_with_options(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
@@ -331,7 +335,14 @@ impl MemoryBackend {
         broad_recall: bool,
     ) -> Result<Vec<Memory>, MicroClawError> {
         self.provider
-            .search_memories_with_options(chat_id, query, limit, include_archived, broad_recall)
+            .search_memories_with_options(
+                user_filter,
+                chat_id,
+                query,
+                limit,
+                include_archived,
+                broad_recall,
+            )
             .await
     }
 
@@ -435,6 +446,7 @@ pub trait MemoryProvider: Send + Sync {
 
     async fn get_all_memories_for_chat(
         &self,
+        user_filter: Option<&str>,
         chat_id: Option<i64>,
     ) -> Result<Vec<Memory>, MicroClawError>;
 
@@ -447,6 +459,7 @@ pub trait MemoryProvider: Send + Sync {
 
     async fn search_memories_with_options(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
@@ -609,11 +622,13 @@ impl SqliteMemoryProvider {
 impl MemoryProvider for SqliteMemoryProvider {
     async fn get_all_memories_for_chat(
         &self,
+        user_filter: Option<&str>,
         chat_id: Option<i64>,
     ) -> Result<Vec<Memory>, MicroClawError> {
         let chat = chat_id;
+        let uid = user_filter.map(str::to_string);
         call_blocking(self.db.clone(), move |db| {
-            db.get_all_memories_for_chat(chat)
+            db.get_all_memories_for_chat(uid.as_deref(), chat)
         })
         .await
     }
@@ -633,6 +648,7 @@ impl MemoryProvider for SqliteMemoryProvider {
 
     async fn search_memories_with_options(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
@@ -640,8 +656,16 @@ impl MemoryProvider for SqliteMemoryProvider {
         broad_recall: bool,
     ) -> Result<Vec<Memory>, MicroClawError> {
         let q = query.to_string();
+        let uid = user_filter.map(str::to_string);
         call_blocking(self.db.clone(), move |db| {
-            db.search_memories_with_options(chat_id, &q, limit, include_archived, broad_recall)
+            db.search_memories_with_options(
+                uid.as_deref(),
+                chat_id,
+                &q,
+                limit,
+                include_archived,
+                broad_recall,
+            )
         })
         .await
     }
@@ -746,11 +770,13 @@ impl MemoryProvider for McpMemoryProvider {
 
     async fn get_all_memories_for_chat(
         &self,
+        user_filter: Option<&str>,
         chat_id: Option<i64>,
     ) -> Result<Vec<Memory>, MicroClawError> {
         let op = "memory_query(list)";
         let payload = serde_json::json!({
             "op": "list",
+            "user_id": user_filter,
             "chat_id": chat_id,
         });
         let value = self
@@ -784,6 +810,7 @@ impl MemoryProvider for McpMemoryProvider {
 
     async fn search_memories_with_options(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
@@ -793,6 +820,7 @@ impl MemoryProvider for McpMemoryProvider {
         let op = "memory_query(search)";
         let payload = serde_json::json!({
             "op": "search",
+            "user_id": user_filter,
             "chat_id": chat_id,
             "query": query,
             "limit": limit,
@@ -1005,12 +1033,13 @@ impl MemoryProvider for FallbackMemoryProvider {
 
     async fn get_all_memories_for_chat(
         &self,
+        user_filter: Option<&str>,
         chat_id: Option<i64>,
     ) -> Result<Vec<Memory>, MicroClawError> {
         self.fallback_on_err(
             "memory_query(list)",
-            self.primary.get_all_memories_for_chat(chat_id),
-            self.fallback.get_all_memories_for_chat(chat_id),
+            self.primary.get_all_memories_for_chat(user_filter, chat_id),
+            self.fallback.get_all_memories_for_chat(user_filter, chat_id),
         )
         .await
     }
@@ -1031,6 +1060,7 @@ impl MemoryProvider for FallbackMemoryProvider {
 
     async fn search_memories_with_options(
         &self,
+        user_filter: Option<&str>,
         chat_id: i64,
         query: &str,
         limit: usize,
@@ -1040,6 +1070,7 @@ impl MemoryProvider for FallbackMemoryProvider {
         self.fallback_on_err(
             "memory_query(search)",
             self.primary.search_memories_with_options(
+                user_filter,
                 chat_id,
                 query,
                 limit,
@@ -1047,6 +1078,7 @@ impl MemoryProvider for FallbackMemoryProvider {
                 broad_recall,
             ),
             self.fallback.search_memories_with_options(
+                user_filter,
                 chat_id,
                 query,
                 limit,
@@ -1374,6 +1406,7 @@ mod tests {
 
         async fn get_all_memories_for_chat(
             &self,
+            _user_filter: Option<&str>,
             _chat_id: Option<i64>,
         ) -> Result<Vec<Memory>, MicroClawError> {
             Ok(vec![sample_memory(1, "all")])
@@ -1394,6 +1427,7 @@ mod tests {
 
         async fn search_memories_with_options(
             &self,
+            _user_filter: Option<&str>,
             _chat_id: i64,
             _query: &str,
             _limit: usize,

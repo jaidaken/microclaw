@@ -214,7 +214,7 @@ pub(crate) async fn maybe_handle_explicit_memory_command(
 
     let existing = state
         .memory_backend
-        .get_all_memories_for_chat(Some(chat_id))
+        .get_all_memories_for_chat(None, Some(chat_id))
         .await?;
     let explicit_topic = memory_quality::memory_topic_key(&explicit_content);
     if let Some(dup) = existing.iter().find(|m| {

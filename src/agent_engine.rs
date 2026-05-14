@@ -3099,7 +3099,7 @@ mod tests {
                 "expected explicit fast-path save reply, got: {reply}"
             );
 
-            let mems = state.db.get_all_memories_for_chat(Some(chat_id)).unwrap();
+            let mems = state.db.get_all_memories_for_chat(None, Some(chat_id)).unwrap();
             assert_eq!(mems.iter().filter(|m| !m.is_archived).count(), 1);
             drop(state);
 
@@ -3185,7 +3185,7 @@ mod tests {
             "expected supersede reply, got: {second}"
         );
 
-        let all = state.db.get_all_memories_for_chat(Some(chat_id)).unwrap();
+        let all = state.db.get_all_memories_for_chat(None, Some(chat_id)).unwrap();
         let active: Vec<_> = all.iter().filter(|m| !m.is_archived).collect();
         let archived: Vec<_> = all.iter().filter(|m| m.is_archived).collect();
         assert_eq!(active.len(), 1);

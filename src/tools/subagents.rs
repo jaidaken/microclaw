@@ -356,33 +356,32 @@ async fn run_sub_agent_task(
             input_tokens_sum += input_tokens;
             output_tokens_sum += output_tokens;
 
-            let channel = auth_context.caller_channel.clone();
-            let provider = config.llm_provider.clone();
-            let model = config.model.clone();
-            let chat_id = auth_context.caller_chat_id;
-            let user_id_for_usage = if auth_context.user_id.is_empty() {
+            if auth_context.user_id.is_empty() {
                 tracing::warn!(
                     chat_id = auth_context.caller_chat_id,
-                    "subagent log_llm_usage: auth_context.user_id empty; falling back to bootstrap_user_id"
+                    "subagent log_llm_usage: auth_context.user_id empty; skipping usage row to avoid mis-tenancy"
                 );
-                microclaw_core::tenant::bootstrap_user_id()
             } else {
-                auth_context.user_id.clone()
-            };
-            let _ = call_blocking(db.clone(), move |db| {
-                db.log_llm_usage(
-                    &user_id_for_usage,
-                    chat_id,
-                    &channel,
-                    &provider,
-                    &model,
-                    input_tokens,
-                    output_tokens,
-                    "subagent_run",
-                )
-                .map(|_| ())
-            })
-            .await;
+                let channel = auth_context.caller_channel.clone();
+                let provider = config.llm_provider.clone();
+                let model = config.model.clone();
+                let chat_id = auth_context.caller_chat_id;
+                let user_id_for_usage = auth_context.user_id.clone();
+                let _ = call_blocking(db.clone(), move |db| {
+                    db.log_llm_usage(
+                        &user_id_for_usage,
+                        chat_id,
+                        &channel,
+                        &provider,
+                        &model,
+                        input_tokens,
+                        output_tokens,
+                        "subagent_run",
+                    )
+                    .map(|_| ())
+                })
+                .await;
+            }
             let total = input_tokens_sum + output_tokens_sum;
             if run_token_budget > 0 && total > run_token_budget {
                 return Err(format!(
