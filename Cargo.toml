@@ -41,7 +41,7 @@ teloxide = { version = "0.17", features = ["macros"] }
 tokio = { version = "1.52", features = ["full"] }
 tokio-native-tls = "0.3"
 native-tls = "0.2"
-reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "http2", "json", "blocking"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json", "blocking"] }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -86,7 +86,7 @@ opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_ex
 prost = "0.14"
 clap = { version = "4.6.1", features = ["derive"] }
 http = "1"
-rmcp = { version = "1.6", features = [
+rmcp = { version = "1.7", features = [
     "client",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",
